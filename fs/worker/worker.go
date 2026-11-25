@@ -94,6 +94,22 @@ func runProcContainer(ctx context.Context, container Container, requests <-chan 
 	}
 }
 
+func runTickerContainer(ctx context.Context, container Container, requests <-chan procRequest) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case request := <-requests:
+			data, err := implementations.ReadLoadavgForWorker(container.ID, request.pid)
+			response := repairResponse{Data: data}
+			if err != nil {
+				response.Error = err.Error()
+			}
+			request.response <- response
+		}
+	}
+}
+
 // Run reads manager commands and maintains one cancellable task per container.
 // The role-specific work is injected so lifecycle behavior can be tested without
 // privileged FUSE mounts or a container runtime.
@@ -115,6 +131,7 @@ func RunWithRepair(ctx context.Context, role Role, input io.Reader, output io.Wr
 	}
 	tasks := make(map[string]context.CancelFunc)
 	procTasks := make(map[string]chan procRequest)
+	tickerTasks := make(map[string]chan procRequest)
 	defer func() {
 		for id, cancel := range tasks {
 			cancel()
@@ -182,6 +199,18 @@ func RunWithRepair(ctx context.Context, role Role, input io.Reader, output io.Wr
 			response := repairResponse{}
 			if tasks[id] == nil {
 				response.Error = fmt.Sprintf("container %s has no ticker task", id)
+			} else if requests := tickerTasks[id]; requests != nil {
+				responseCh := make(chan repairResponse, 1)
+				select {
+				case requests <- procRequest{action: command.Action, pid: command.PID, response: responseCh}:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				select {
+				case response = <-responseCh:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 			} else {
 				data, err := implementations.ReadLoadavgForWorker(id, command.PID)
 				response.Data = data
@@ -207,6 +236,7 @@ func RunWithRepair(ctx context.Context, role Role, input io.Reader, output io.Wr
 			}
 			delete(tasks, id)
 			delete(procTasks, id)
+			delete(tickerTasks, id)
 		}
 		switch command.Action {
 		case "add":
@@ -222,6 +252,10 @@ func RunWithRepair(ctx context.Context, role Role, input io.Reader, output io.Wr
 				requests := make(chan procRequest)
 				procTasks[id] = requests
 				go runProcContainer(taskCtx, command.Container, requests)
+			} else if tickerWork {
+				requests := make(chan procRequest)
+				tickerTasks[id] = requests
+				go runTickerContainer(taskCtx, command.Container, requests)
 			} else {
 				go work(taskCtx, command.Container)
 			}

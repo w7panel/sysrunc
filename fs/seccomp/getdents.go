@@ -97,6 +97,12 @@ func (t *syscallTracer) processGetdents64(req *sysRequest, notifyFD int32, cntr 
 	if targetFD < 0 {
 		return t.createContinueResponse(req.ID), nil
 	}
+	// The kernel receives count as unsigned int. A raw syscall can still put
+	// nonzero high bits in the seccomp argument register; treating all 64 bits
+	// as the buffer length could write beyond the caller's actual request.
+	if req.Data.Args[2]>>32 != 0 {
+		return t.createContinueResponse(req.ID), nil
+	}
 	process := t.service.prs.ProcessCreate(req.Pid, 0, 0)
 	path, err := process.GetFd(targetFD)
 	if err != nil || path != procRandomDir {

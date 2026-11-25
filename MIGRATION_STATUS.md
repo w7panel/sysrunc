@@ -25,7 +25,7 @@ This is a local-image source integration result. L0 still has the older
 Sysbox installation for other workloads. The final image has not been
 published or accepted as a release artifact. The L0 test runtime is installed
 by isolated Helm release `sysrunc-l0-it`; L1 currently runs the complete,
-locally built `sysrunc-it:218-20261125-getdents-observe` image at Helm revision 53.
+locally built `sysrunc-it:218-20261125-getdents-count` image at Helm revision 59.
 An installer DaemonSet rollout now preserves FS and snapshotter in an
 independent L1 cgroup. The first full-image rollout at revision 30 disconnected
 existing FUSE mounts; the corrected revision 33/34 rollout kept both daemon
@@ -63,6 +63,27 @@ markers passed. A same-image revision 52 upgrade preserved the K3s, FS,
 snapshotter, agent, FS Pod, and ticker Pod identities.
 The current source Chart package also passed a same-image revision 53 upgrade
 without changing those identities; it remains an unpublished local artifact.
+An isolated L1 Helm rollback to the prior `getdents-safe` image produced
+revision 54; the K3s Server, agent, and a new Sysrunc nginx sandbox recovered.
+Rolling back to the then-current `getdents-observe` image produced revision 55.
+After recreating four `restartPolicy: Never` test Pods, their CRI, HTTP, PVC,
+and FS directory checks passed; the new FS log recorded a direct `getdents64`
+hit. Each image change restarted K3s and left the old test Pods `Unknown`, so
+this is a recoverable L1 installer rollback, not uninterrupted workloads.
+The ticker worker now dispatches opted-in `read_loadavg` requests to each
+container's cancellable goroutine. Local worker and race tests passed. The
+full `ticker-goroutine` image ran in the isolated CKM at revision 56; the
+running FS hash matched the build, the ticker Pod read `/proc/loadavg`, and
+four L2 CRI, HTTP, FS, and PVC checks passed. Reapplying the same image and
+Chart at revision 57 left K3s, the ticker worker, and four Pod identities
+unchanged. This is still a local-image integration result.
+The `getdents64` notifier now lets the kernel handle raw calls whose count
+register has nonzero high 32 bits. A direct syscall probe in the FS Pod
+previously returned 224 bytes for `0x100000010` although the kernel receives
+only 16; the fixed image returned `EINVAL`, matching an ordinary count of 16.
+Normal 224-byte directory reads and the direct-hit log still passed. The
+fixed local image ran at revision 58, and same-image revision 59 preserved
+K3s and all four L2 Pod identities. See `INTEGRATION_218.md` for hashes.
 The old `FsState` route only synthesized a `/lib/modules/<kernel-release>`
 link; no current sysrunc runtime path calls it, so no replacement mount is
 created.
@@ -85,8 +106,9 @@ created.
   `sysrunc` names. The legacy gRPC service and compatibility executable names
   remain available for rolling socket clients and existing L0 Sysbox workloads.
 - The isolated 218 test uses local images. A complete Dockerfile build passed;
-  published image/Chart acceptance is outstanding. The k0s persistence
-  fixture passed, but a full k0s service boot and node rollback have not.
+  published image/Chart acceptance and L0 node-level runtime rollback remain open.
+  The `/var/lib/k0s` fixture only verifies persistent special-directory
+  handling; running a k0s service is outside this CKM K3s acceptance scope.
 
 The `sysrunc` runtime selects FS with `sysrunc.io/fs=true` and ticker with
 `sysrunc.io/ticker=true`. Both default to false. Ticker requires FS. The
@@ -143,9 +165,9 @@ snapshotter and runc when a rootfs rw-layer is configured. FS-enabled system
 container behavior is therefore incomplete. The isolated 218 CKM has passed
 FS-enabled workload tests and proc worker recovery, including the current
 `/proc/swaps` worker output comparison. A legacy rootfs annotation Pod also
-passed with a persistent `/var/lib/k0s` marker across Pod recreation. A full
-k0s service startup, node rollback, remaining virtual proc paths, and
-published artifacts still need acceptance. The exact cluster evidence is in
+passed with a persistent `/var/lib/k0s` marker across Pod recreation. CKM K3s
+L0 node-level runtime rollback, remaining virtual proc paths, and published artifacts still
+need acceptance. The exact cluster evidence is in
 `INTEGRATION_218.md`.
 
 ## Historical 218 checkpoints

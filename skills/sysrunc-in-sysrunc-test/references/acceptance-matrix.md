@@ -220,3 +220,31 @@ the local build; other FUSE resources and published artifact acceptance remain
 open. The current source Chart package also passed a same-image revision 53
 upgrade without changing these identities. See `INTEGRATION_218.md` for hashes
 and identities.
+
+## 218 ticker goroutine follow-up, 2026-11-25
+
+The isolated CKM rolled L1 installation back to the earlier `getdents-safe`
+image at Helm revision 54 and recovered a new Sysrunc nginx sandbox. Revision
+55 restored `getdents-observe`. Both binary changes restarted K3s and left
+existing `restartPolicy: Never` test Pods `Unknown`; recreating only the named
+test Pods restored them without deleting PVCs. This verifies a recoverable L1
+installer rollback, not uninterrupted workloads or L0 node rollback.
+
+Revision 56 installed the local `ticker-goroutine` image. The running FS hash
+matched the build; the ticker Pod read `/proc/loadavg`. Four L2 status checks,
+nginx HTTP, PVC markers, the seven-file probe, and the random-directory
+`getdents64` probe passed. Reapplying the same image and Chart at revision 57
+left K3s restartCount 25, the ticker worker PID, and the four L2 Pod UIDs
+unchanged. This remains local-source integration; published artifact acceptance
+and L0 node-level rollback remain open.
+
+## 218 getdents64 count-width follow-up, 2026-11-25
+
+A raw syscall probe found that the local revision 57 FS fast path accepted a
+64-bit count whose low 32 bits were 16 and returned 224 bytes, while a plain
+count of 16 returned `EINVAL`. The kernel treats the argument as unsigned int.
+The fixed notifier defers requests with nonzero high bits to the kernel/FUSE
+path. The same probe returned `EINVAL` for both cases on the revision 58 local
+image; a normal 224-byte directory read still hit seccomp notify. Four L2
+status, HTTP, ticker, and PVC checks passed. Same-image revision 59 preserved
+the K3s restart count and all four L2 Pod UIDs. The image remains unpublished.
