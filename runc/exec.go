@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/w7panel/sysrunc/runc/libcontainer"
-	"github.com/w7panel/sysrunc/runc/libcontainer/utils"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/urfave/cli"
+	"github.com/w7panel/sysrunc/runc/libcontainer"
+	"github.com/w7panel/sysrunc/runc/libcontainer/utils"
 )
 
 var execCommand = cli.Command{
@@ -166,6 +166,11 @@ func execProcess(context *cli.Context) (int, error) {
 	p, err := getProcess(context, bundle)
 	if err != nil {
 		return -1, err
+	}
+	if state.Config.NestedSystemContainer {
+		if err := prepareNestedSystemProcess(p); err != nil {
+			return -1, err
+		}
 	}
 
 	cgPaths, err := getSubCgroupPaths(context.StringSlice("cgroup"))

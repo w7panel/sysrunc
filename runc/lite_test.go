@@ -30,6 +30,35 @@ func TestRootfsAnnotationMigration(t *testing.T) {
 	}
 }
 
+func TestNestedSystemSpecRestoresSysboxSecurity(t *testing.T) {
+	for _, uid := range []uint32{0, 1000} {
+		spec := &specs.Spec{
+			Process: &specs.Process{
+				User:            specs.User{UID: uid},
+				ApparmorProfile: "cri-default",
+				Capabilities:    &specs.LinuxCapabilities{Bounding: []string{"CAP_CHOWN"}},
+			},
+			Linux: &specs.Linux{
+				MaskedPaths:   []string{"/proc/kcore", "/proc/sys", "/other"},
+				ReadonlyPaths: []string{"/proc/sys", "/other"},
+			},
+		}
+		applyNestedSystemSecurity(spec, []string{"CAP_NET_ADMIN", "CAP_SYS_ADMIN", "CAP_SYS_PTRACE"})
+		if spec.Process.ApparmorProfile != "" {
+			t.Fatalf("uid %d: AppArmor profile retained", uid)
+		}
+		if got := spec.Process.Capabilities.Bounding; len(got) != 3 {
+			t.Fatalf("uid %d: bounding capabilities = %v", uid, got)
+		}
+		if got := spec.Process.Capabilities.Effective; (uid == 0 && len(got) != 3) || (uid != 0 && len(got) != 0) {
+			t.Fatalf("uid %d: effective capabilities = %v", uid, got)
+		}
+		if len(spec.Linux.MaskedPaths) != 1 || spec.Linux.MaskedPaths[0] != "/other" || len(spec.Linux.ReadonlyPaths) != 1 || spec.Linux.ReadonlyPaths[0] != "/other" {
+			t.Fatalf("uid %d: proc restrictions retained: masked=%v readonly=%v", uid, spec.Linux.MaskedPaths, spec.Linux.ReadonlyPaths)
+		}
+	}
+}
+
 func TestDisabledRootfsAnnotationDoesNotCreateSpecialMounts(t *testing.T) {
 	for _, raw := range []string{"", "false"} {
 		spec := &specs.Spec{Annotations: map[string]string{liteRootfsAnnotation: raw}}

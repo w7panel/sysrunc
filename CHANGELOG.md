@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Restored Sysbox's system-container capability, AppArmor, and `/proc` OCI spec conversion for rootfs-backed nested containers, including `runc exec` processes. CKM had to declare `NET_ADMIN`, `SYS_ADMIN`, `SYS_PTRACE`, Unconfined AppArmor, and Unmasked proc explicitly because Sysrunc omitted this conversion; root processes now receive the runtime's effective capabilities and writable namespaced proc paths without CKM-specific security overrides. The first 218 test passed K3s startup but `kubectl exec` still lacked `NET_ADMIN`, which exposed the missing exec path.
 - Prepared nested `sysfs` mounts before entering the L0 Server user namespace, so L1 native runc can mount sysfs without enabling an L0 FS listener. The previous L0 listener was inherited by L2 and made its seccomp notify setup fail with `EBUSY`.
 - Allowed FS to use the existing zero UUID fallback when nested user namespaces deny access to `product_uuid`; the L1 FS daemon previously exited before the snapshotter started.
 - Replaced pre-existing mounts at persistent special paths and made the replacements recursively shared, matching Sysbox's K3s mount behavior. Duplicate private `/var/lib/kubelet` mounts had prevented the L1 cert-manager CSI driver from starting.

@@ -20,6 +20,7 @@ require (
 	// NOTE: urfave/cli must be <= v1.22.1 due to a regression: https://github.com/urfave/cli/issues/1092
 	github.com/urfave/cli v1.22.1
 	github.com/vishvananda/netlink v1.1.0
+	github.com/w7panel/sysrunc/libs/capability v0.0.0-00010101000000-000000000000
 	github.com/w7panel/sysrunc/ipc v0.0.0-00010101000000-000000000000
 	golang.org/x/net v0.0.0-20201224014010-6772e930b67b
 	golang.org/x/sys v0.0.0-20211116061358-0a5406a5449c

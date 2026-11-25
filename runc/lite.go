@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/w7panel/sysrunc/libs/capability"
 )
 
 const (
@@ -35,7 +36,90 @@ func prepareLiteSpec(spec *specs.Spec, id string) error {
 	if err := initLiteVolumes(spec); err != nil {
 		return err
 	}
-	return addLiteSpecialMounts(spec, id)
+	if err := addLiteSpecialMounts(spec, id); err != nil {
+		return err
+	}
+	if spec.Annotations[liteNestedContainerAnnotation] == "true" {
+		return prepareNestedSystemSpec(spec)
+	}
+	return nil
+}
+
+// prepareNestedSystemSpec restores the system-container OCI settings that
+// Sysbox applied before invoking runc. Rootfs intent identifies this path;
+// ordinary Sysrunc containers retain their requested security settings.
+func prepareNestedSystemSpec(spec *specs.Spec) error {
+	if spec.Process == nil || spec.Linux == nil {
+		return fmt.Errorf("nested system container requires process and linux specs")
+	}
+	runtimeCaps, err := nestedRuntimeCaps()
+	if err != nil {
+		return err
+	}
+	applyNestedSystemSecurity(spec, runtimeCaps)
+	return nil
+}
+
+func nestedRuntimeCaps() ([]string, error) {
+	caps, err := capability.NewPid2(0)
+	if err != nil {
+		return nil, fmt.Errorf("read runtime capabilities: %w", err)
+	}
+	if err := caps.Load(); err != nil {
+		return nil, fmt.Errorf("load runtime capabilities: %w", err)
+	}
+	runtimeCaps := strings.FieldsFunc(caps.StringCap(capability.EFFECTIVE, capability.OCI_STRING), func(r rune) bool { return r == ',' || r == ' ' })
+	return runtimeCaps, nil
+}
+
+func applyNestedSystemSecurity(spec *specs.Spec, runtimeCaps []string) {
+	applyNestedSystemProcessSecurity(spec.Process, runtimeCaps)
+	spec.Linux.MaskedPaths = removeNestedPaths(spec.Linux.MaskedPaths, "/proc", "/proc/sys", "/proc/kcore", "/proc/kallsyms", "/proc/kmsg")
+	spec.Linux.ReadonlyPaths = removeNestedPaths(spec.Linux.ReadonlyPaths, "/proc", "/proc/sys")
+}
+
+func applyNestedSystemProcessSecurity(process *specs.Process, runtimeCaps []string) {
+	if process.Capabilities == nil {
+		process.Capabilities = &specs.LinuxCapabilities{}
+	}
+	process.Capabilities.Bounding = append([]string(nil), runtimeCaps...)
+	process.Capabilities.Effective = nil
+	process.Capabilities.Inheritable = nil
+	process.Capabilities.Permitted = nil
+	process.Capabilities.Ambient = nil
+	if process.User.UID == 0 {
+		process.Capabilities.Effective = append([]string(nil), runtimeCaps...)
+		process.Capabilities.Inheritable = append([]string(nil), runtimeCaps...)
+		process.Capabilities.Permitted = append([]string(nil), runtimeCaps...)
+		process.Capabilities.Ambient = append([]string(nil), runtimeCaps...)
+	}
+	process.ApparmorProfile = ""
+}
+
+func prepareNestedSystemProcess(process *specs.Process) error {
+	runtimeCaps, err := nestedRuntimeCaps()
+	if err != nil {
+		return err
+	}
+	applyNestedSystemProcessSecurity(process, runtimeCaps)
+	return nil
+}
+
+func removeNestedPaths(paths []string, allowed ...string) []string {
+	result := paths[:0]
+	for _, path := range paths {
+		remove := false
+		for _, candidate := range allowed {
+			if path == candidate {
+				remove = true
+				break
+			}
+		}
+		if !remove {
+			result = append(result, path)
+		}
+	}
+	return result
 }
 
 func initLiteVolumes(spec *specs.Spec) error {
