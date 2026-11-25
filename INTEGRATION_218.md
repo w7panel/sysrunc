@@ -1188,3 +1188,22 @@ FS 或 L0 新运行时验收。
   FS Pod 可读 `/proc/sys/kernel/random/uuid` 和 `/proc/meminfo`。
   本轮未在另一专用 CKM `ckm-sysrunc-security-1125` 安装内层 Chart，
   也未测试 CSI StorageClass。
+
+## 2026-11-25 L2 rootfs 持久层复验
+
+- 在专用 `ckm-sysrunc-fresh-1125` 的 L2 创建
+  `default/sysrunc-l2-rootfs-1125` 与独立 `local-path` PVC。Pod 使用
+  `runtimeClassName: sysrunc` 和 `sysrunc.io/rootfs-rw-layer` 注解；
+  admission 注入 `sysrunc-rootfs` sidecar。首次用 `restartPolicy: Never`
+  时，应用容器在 sidecar OCI spec 可用前报
+  `sysbox sidecar oci spec unavailable` 并停在 `StartError`。
+- 改用正常的 `Always` 策略重建同名测试 Pod 后，应用容器首次尝试仍可能
+  遇到该错误，但自动重试一次后 Ready。CRI sandbox 为
+  `sysrunc/SANDBOX_READY`，nginx HTTP 200。在容器根文件系统的
+  `/root/rootfs-marker-1125` 写入 `rootfs-1125-persist` 后，只重建该
+  Pod，UID 从 `ddbd4eec-03db-40b2-898f-3f4f8084a88c` 变为
+  `ff28c9e4-4e24-442c-9d56-e333f40f4116`。新 Pod 仍可读该标记且
+  HTTP 200；rootfs PVC `sysrunc-l2-rootfs-1125` 保持 Bound。
+- 因此首次 sidecar spec 错误仅在后续自动恢复 Ready 时可忽略；持续
+  `StartError` 仍是失败。本轮验证了发布镜像在 `local-path` 上的 L2
+  rootfs 持久化，未验证 CSI StorageClass。
