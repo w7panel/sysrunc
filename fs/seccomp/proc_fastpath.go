@@ -28,6 +28,12 @@ var procVirtualFiles = map[string]bool{
 	"/proc/uptime": true, "/proc/loadavg": true,
 }
 
+// These UTS files are read-only and have the same contents in every namespace.
+var procHostUTSFiles = map[string]bool{
+	"/proc/sys/kernel/ostype": true, "/proc/sys/kernel/osrelease": true,
+	"/proc/sys/kernel/version": true,
+}
+
 func procPlainReadFlags(flags, resolve uint64) bool {
 	return resolve == 0 && flags&^uint64(unix.O_CLOEXEC|unix.O_LARGEFILE) == 0
 }
@@ -85,7 +91,7 @@ func (t *syscallTracer) procFastPath(req *sysRequest, path string) string {
 	if path == "" || path == "." || path == ".." || strings.Contains(path, "/") {
 		return path
 	}
-	if path != "uuid" && !procVirtualFiles["/proc/"+path] {
+	if path != "uuid" && !procVirtualFiles["/proc/"+path] && !procHostUTSFiles["/proc/sys/kernel/"+path] {
 		return path
 	}
 	process := t.service.prs.ProcessCreate(req.Pid, 0, 0)
@@ -107,7 +113,31 @@ func (t *syscallTracer) procFastPath(req *sysRequest, path string) string {
 	if parent == "/proc" && procVirtualFiles["/proc/"+path] {
 		return "/proc/" + path
 	}
+	if parent == "/proc/sys/kernel" && procHostUTSFiles[parent+"/"+path] {
+		return parent + "/" + path
+	}
 	return path
+}
+
+func (t *syscallTracer) tryProcHostUTSOpen(req *sysRequest, notifyFD int32, cntr domain.ContainerIface, path string, flags, resolve uint64) (*sysResponse, bool) {
+	if !procHostUTSFiles[path] || !procPlainReadFlags(flags, resolve) || procPathMasked(path, cntr.ProcMaskPaths()) {
+		return nil, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	memfd, err := makeReadOnlyProcFD("sysrunc-"+filepath.Base(path), data)
+	if err != nil {
+		return nil, false
+	}
+	defer unix.Close(memfd)
+	opener := openat2SyscallInfo{flags: flags, notifyFd: notifyFD, syscallCtx: syscallCtx{reqId: req.ID}}
+	newFD, err := opener.injectFd(memfd)
+	if err != nil {
+		return t.createContinueResponse(req.ID), true
+	}
+	return t.createSuccessResponseWithRetValue(req.ID, uint64(newFD)), true
 }
 
 func (t *syscallTracer) procVirtualHandler(path string) (domain.HandlerIface, bool) {
@@ -274,7 +304,7 @@ func (t *syscallTracer) processStatx(req *sysRequest, notifyFD int32, cntr domai
 			return t.createContinueResponse(req.ID), nil
 		}
 	default:
-		if _, ok := t.procVirtualHandler(target); !ok || procPathMasked(target, cntr.ProcMaskPaths()) {
+		if _, ok := t.procVirtualHandler(target); (!ok && !procHostUTSFiles[target]) || procPathMasked(target, cntr.ProcMaskPaths()) {
 			return t.createContinueResponse(req.ID), nil
 		}
 	}
@@ -335,6 +365,9 @@ func (t *syscallTracer) processOpenat(req *sysRequest, fd int32, cntr domain.Con
 	}
 	resolved := t.procFastPath(req, path[0])
 	if response, handled := t.tryProcUUIDOpen(req.ID, fd, cntr, resolved, req.Data.Args[0], req.Data.Args[2], 0); handled {
+		return response, nil
+	}
+	if response, handled := t.tryProcHostUTSOpen(req, fd, cntr, resolved, req.Data.Args[2], 0); handled {
 		return response, nil
 	}
 	if response, handled := t.tryProcVirtualOpen(req, fd, cntr, resolved, req.Data.Args[2], 0); handled {

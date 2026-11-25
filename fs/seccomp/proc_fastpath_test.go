@@ -135,3 +135,37 @@ func TestProcVirtualFileSelection(t *testing.T) {
 		t.Fatal("proc mask path boundary is wrong")
 	}
 }
+
+func TestProcHostUTSFileSelection(t *testing.T) {
+	for _, name := range []string{"ostype", "osrelease", "version"} {
+		path := "/proc/sys/kernel/" + name
+		if !procHostUTSFiles[path] || !procPlainReadFlags(unix.O_RDONLY|unix.O_CLOEXEC, 0) {
+			t.Fatalf("missing read-only UTS fast path for %s", path)
+		}
+		if !procPathMasked(path, []string{"/proc/sys"}) {
+			t.Fatalf("mask does not cover %s", path)
+		}
+	}
+	for _, path := range []string{"/proc/sys/kernel/hostname", "/proc/sys/kernel/domainname", "/proc/sys/kernel/version/child", "/proc/sys/kernel/../kernel/ostype"} {
+		if procHostUTSFiles[path] {
+			t.Fatalf("unsafe UTS fast path for %s", path)
+		}
+	}
+	for _, flags := range []uint64{unix.O_WRONLY, unix.O_PATH, unix.O_NONBLOCK, unix.O_DIRECTORY} {
+		if procPlainReadFlags(flags, 0) {
+			t.Fatalf("accepted unsupported flags %#x", flags)
+		}
+	}
+	if procPlainReadFlags(unix.O_RDONLY, RESOLVE_IN_ROOT) {
+		t.Fatal("accepted resolve restriction")
+	}
+}
+
+func TestProcHostUTSOpenUnsupportedFlagsContinue(t *testing.T) {
+	tracer := &syscallTracer{service: &SyscallMonitorService{}, memParser: literalProcPathParser("/proc/sys/kernel/ostype")}
+	req := &sysRequest{ID: 43, Data: libseccomp.ScmpNotifData{Args: []uint64{0, 1, unix.O_WRONLY}}}
+	response, err := tracer.processOpenat(req, 0, nil)
+	if err != nil || response == nil || response.Flags != libseccomp.NotifRespFlagContinue {
+		t.Fatalf("unsupported open: response = %+v, err = %v; want continue", response, err)
+	}
+}

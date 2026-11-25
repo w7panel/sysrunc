@@ -147,20 +147,15 @@ func initLiteVolumesAt(spec *specs.Spec, podsDir string) error {
 		if !ok {
 			continue
 		}
-		info, err := os.Lstat(source)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			continue
-		}
-		empty, err := dirEmpty(source)
-		if err != nil || !empty {
-			continue
-		}
 		relative := strings.TrimPrefix(filepath.Clean(mount.Destination), string(filepath.Separator))
 		if relative == "." || relative == "" {
 			continue
 		}
-		imagePath := filepath.Join(rootfs, relative)
-		info, err = os.Lstat(imagePath)
+		imagePath, err := liteImageDir(rootfs, relative)
+		if err != nil {
+			return fmt.Errorf("validate image volume path %s: %w", mount.Destination, err)
+		}
+		info, err := os.Lstat(imagePath)
 		if os.IsNotExist(err) || (err == nil && !info.IsDir()) {
 			continue
 		}
@@ -170,7 +165,7 @@ func initLiteVolumesAt(spec *specs.Spec, podsDir string) error {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("image volume path %s is a symlink", mount.Destination)
 		}
-		if err := copyDir(imagePath, source); err != nil {
+		if err := seedLitePVC(imagePath, source, spec.Linux); err != nil {
 			return fmt.Errorf("initialize PVC mount %s: %w", mount.Destination, err)
 		}
 	}
@@ -267,30 +262,61 @@ func addLiteSpecialMounts(spec *specs.Spec, id string) error {
 		if handoff.ContainerName != name || handoff.VolumeName != entry.VolumeName || handoff.SnapshotKey != id {
 			return fmt.Errorf("persistent special handoff does not match container")
 		}
+		if filepath.IsAbs(entry.Path) || entry.Path == ".." || strings.HasPrefix(entry.Path, "../") || strings.Contains("/"+entry.Path+"/", "/../") {
+			return fmt.Errorf("invalid persistent special layer path %q", entry.Path)
+		}
 		spec.Annotations[liteNestedContainerAnnotation] = "true"
 		liteWritableCgroup(spec)
 		root := filepath.Join(handoff.PVCMountPath, filepath.Clean(entry.Path), "special")
+		if _, err := liteImageDir(handoff.PVCMountPath, filepath.Join(entry.Path, "special")); err != nil {
+			return fmt.Errorf("validate persistent special root: %w", err)
+		}
+		if err := os.MkdirAll(root, 0755); err != nil {
+			return err
+		}
+		lock, err := openLiteDirLock(filepath.Join(root, ".sysrunc-special.lock"))
+		if err != nil {
+			return err
+		}
 		paths := []string{"/var/lib/docker", "/var/lib/kubelet", "/var/lib/k0s", "/var/lib/rancher/k3s", "/var/lib/rancher/rke2", "/var/lib/buildkit", "/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs"}
 		paths = append(paths, entry.SpecialPath...)
 		for _, dest := range paths {
-			src := filepath.Join(root, strings.TrimPrefix(filepath.Clean(dest), "/"))
-			if err := os.MkdirAll(src, 0755); err != nil {
+			if !filepath.IsAbs(dest) || dest == "/" || strings.Contains("/"+strings.Trim(dest, "/")+"/", "/../") || strings.Contains("/"+strings.Trim(dest, "/")+"/", "/./") {
+				lock.Close()
+				return fmt.Errorf("invalid special mount path %q", dest)
+			}
+			relative := strings.TrimPrefix(filepath.Clean(dest), "/")
+			src := filepath.Join(root, relative)
+			if _, err := liteImageDir(root, filepath.Dir(relative)); err != nil {
+				lock.Close()
+				return fmt.Errorf("validate special mount source %s: %w", dest, err)
+			}
+			if err := os.MkdirAll(filepath.Dir(src), 0755); err != nil {
+				lock.Close()
 				return err
 			}
-			empty, err := dirEmpty(src)
+			if _, err := liteImageDir(root, filepath.Dir(relative)); err != nil {
+				lock.Close()
+				return fmt.Errorf("validate special mount source %s: %w", dest, err)
+			}
+			imagePath, err := liteImageDir(spec.Root.Path, relative)
 			if err != nil {
+				lock.Close()
 				return err
 			}
-			if empty {
-				if err := copyDir(filepath.Join(spec.Root.Path, filepath.Clean(dest)), src); err != nil && !os.IsNotExist(err) {
-					return fmt.Errorf("initialize special mount %s: %w", dest, err)
-				}
+			if err := seedLiteSpecial(imagePath, src, spec.Linux); err != nil {
+				lock.Close()
+				return fmt.Errorf("initialize special mount %s: %w", dest, err)
 			}
 			mount, err := liteSpecialBindMount(spec.Linux, src, dest)
 			if err != nil {
+				lock.Close()
 				return err
 			}
 			replaceLiteSpecialMount(spec, mount)
+		}
+		if err := lock.Close(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -395,52 +421,4 @@ func dirEmpty(path string) (bool, error) {
 	}
 }
 
-func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			if err := os.MkdirAll(target, info.Mode().Perm()); err != nil {
-				return err
-			}
-			return os.Chmod(target, info.Mode().Perm())
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			link, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			if err := os.Symlink(link, target); err != nil {
-				return err
-			}
-			return nil
-		}
-		in, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
-		if err != nil {
-			return err
-		}
-		_, copyErr := io.Copy(out, in)
-		closeErr := out.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		return os.Chmod(target, info.Mode().Perm())
-	})
-}
+func copyDir(src, dst string) error { return copyLiteDir(src, dst, nil) }

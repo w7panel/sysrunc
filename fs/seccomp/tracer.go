@@ -1491,6 +1491,9 @@ func (t *syscallTracer) processOpenat2(
 		if response, handled := t.tryProcUUIDOpen(req.ID, fd, cntr, resolved, req.Data.Args[0], flags, resolve); handled {
 			return response, nil
 		}
+		if response, handled := t.tryProcHostUTSOpen(req, fd, cntr, resolved, flags, resolve); handled {
+			return response, nil
+		}
 		if response, handled := t.tryProcVirtualOpen(req, fd, cntr, resolved, flags, resolve); handled {
 			return response, nil
 		}

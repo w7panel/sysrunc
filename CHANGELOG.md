@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Made L2 rootfs empty-PVC seeding serial and retryable after an interrupted copy, and published persistent special directories only after a complete rsync. The copy now preserves hard links, ACLs, xattrs, and mapped ownership; image and special mount paths reject symlink traversal.
+- Added seccomp notify read and statx fast paths for the three read-only UTS files `/proc/sys/kernel/{ostype,osrelease,version}`. Other `/proc/sys` paths continue through the existing kernel and FUSE path.
 - Added `make full` to validate and package the Sysrunc Chart, build and push its matching installer image to CCR, and attach the Chart to the `w7panel-sysrunc` ZPK application. The command downloads the ZPK CLI when missing, using the same URL as `w7panel-ckm/.cnb.yml`.
 - Sent opted-in ticker `read_loadavg` requests through each container's cancellable worker goroutine, so request handling follows container task lifecycle.
 - Deferred `getdents64` seccomp requests with nonzero high count bits to the kernel: the syscall takes a 32-bit count, and interpreting the full 64-bit register could write beyond the caller's requested buffer.
