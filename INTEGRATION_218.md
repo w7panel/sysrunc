@@ -1243,3 +1243,28 @@ FS 或 L0 新运行时验收。
   的状态脚本确认 `sysrunc/SANDBOX_READY`；旧 nginx 与 rootfs HTTP 200，
   原 PVC 和 `/root/rootfs-marker-1125` 均保留。本轮只使用 L1 唯一的
   `local-path` StorageClass；CSI 与吞吐量化未运行。所有测试 PVC 保留。
+
+## 2026-11-25 L0 Longhorn `disk-default` 复验
+
+- `disk-default` 只存在于 218 外层 L0 集群，provisioner 为
+  `driver.longhorn.io`。在 L0 `default` 创建两个独立的 1Gi PVC：
+  `sysrunc-longhorn-seed-1125` 和 `sysrunc-longhorn-special-1125`。
+  两者均 Bound，对应 PV 的 CSI driver 均为 `driver.longhorn.io`。
+- 两个同名 Pod 使用 `runtimeClassName: sysrunc` 和
+  `ccr.ccs.tencentyun.com/afan-public/nginx:latest`，实际镜像 digest 为
+  `sha256:29cf9892ca1103e0b8c97db86f819fac1d9457b176bc77dd4f18ed2da4dd159f`。
+  普通挂载用例的空 PVC 自动得到 `index.html` 与 `50x.html`。
+  rootfs 用例通过 `sysrunc.io/rootfs-rw-layer` 的
+  `persistentSpecialMounts` 和 `/usr/share/nginx/html` `specialPath`
+  自动注入 `sysrunc-rootfs` sidecar，特殊目录同样完成首次复制；
+  容器内该目录的挂载源为 `/dev/longhorn/pvc-50900d5a-fba7-4db2-a696-554ee0c70e4f`。
+- 分别写入 webroot 标记，并在 rootfs 用例额外写入 `/root` 标记。
+  删除并重建两个 Pod 后，UID 分别从
+  `2a38a2a9-6c09-4fd6-973b-d0147104bf46` 变为
+  `6f6e0b00-af28-426a-bb91-35cab8441da5`，以及从
+  `5c2243bd-d51c-4fcd-9854-db2301c5f3a6` 变为
+  `49dd44b5-6538-4db8-840e-649cf2dce72f`。
+  三个标记及两个 nginx 默认文件均保留，两个 Pod 均 Ready，
+  经 port-forward 访问均返回 HTTP 200。测试 PVC 保留。
+- 本次验证的是 **L0 Longhorn CSI**；专用 CKM 内层 L1 仍只有
+  `local-path` StorageClass，不能据此视为 L1 CSI 验收。未进行吞吐量化。
