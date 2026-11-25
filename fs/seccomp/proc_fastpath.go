@@ -26,6 +26,8 @@ var procVirtualFiles = map[string]bool{
 	"/proc/meminfo": true, "/proc/stat": true,
 	"/proc/swaps":  true,
 	"/proc/uptime": true, "/proc/loadavg": true,
+	"/proc/pressure/cpu": true, "/proc/pressure/io": true,
+	"/proc/pressure/memory": true,
 }
 
 // These UTS files are read-only and have the same contents in every namespace.
@@ -91,7 +93,7 @@ func (t *syscallTracer) procFastPath(req *sysRequest, path string) string {
 	if path == "" || path == "." || path == ".." || strings.Contains(path, "/") {
 		return path
 	}
-	if path != "uuid" && !procVirtualFiles["/proc/"+path] && !procHostUTSFiles["/proc/sys/kernel/"+path] {
+	if path != "uuid" && !procVirtualFiles["/proc/"+path] && !procVirtualFiles["/proc/pressure/"+path] && !procHostUTSFiles["/proc/sys/kernel/"+path] {
 		return path
 	}
 	process := t.service.prs.ProcessCreate(req.Pid, 0, 0)
@@ -112,6 +114,9 @@ func (t *syscallTracer) procFastPath(req *sysRequest, path string) string {
 	}
 	if parent == "/proc" && procVirtualFiles["/proc/"+path] {
 		return "/proc/" + path
+	}
+	if parent == "/proc/pressure" && procVirtualFiles[parent+"/"+path] {
+		return parent + "/" + path
 	}
 	if parent == "/proc/sys/kernel" && procHostUTSFiles[parent+"/"+path] {
 		return parent + "/" + path

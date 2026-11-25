@@ -21,10 +21,11 @@ made shared and duplicate volume mounts were removed. An unchanged L1 Chart
 upgrade to revision 11 did not restart K3s or the agent. Evidence and hashes
 are in `INTEGRATION_218.md`.
 
-This is a local-image source integration result. L0 still has the older
-Sysbox installation for other workloads. The final image has not been
-published or accepted as a release artifact. The L0 test runtime is installed
-by isolated Helm release `sysrunc-l0-it`; L1 currently runs the complete,
+This section records the earlier local-image source integration result. L0 still
+has the older Sysbox installation for other workloads. A later `v0.1.2` image
+and Chart were published and accepted for the rootfs copy and proc fast paths
+listed in `INTEGRATION_218.md`. The L0 test runtime was installed
+by isolated Helm release `sysrunc-l0-it`; at that point L1 ran the complete,
 locally built `sysrunc-it:218-20261125-getdents-count` image at Helm revision 59.
 An installer DaemonSet rollout now preserves FS and snapshotter in an
 independent L1 cgroup. The first full-image rollout at revision 30 disconnected
@@ -97,6 +98,11 @@ created.
   the local handler. Writable proc sysctls and most FUSE handling
   remain in the manager. The FUSE worker handles repair requests, while normal FUSE
   requests remain in the manager.
+- The existing container-aware `/proc/pressure/{cpu,io,memory}` handlers now
+  have exact-path, plain-read seccomp notify fast paths in source. They use
+  read-only memfd snapshots; masked paths and unsupported flags still fall
+  back to FUSE. This addition has passed local tests and build, but has not
+  yet been deployed to 218.
 - `openat`/`openat2` and `statx` are intercepted for selected proc resources.
   `getdents64` is served directly for the exact `/proc/sys/kernel/random`
   directory while the original FUSE fd remains in the tracee. Other
@@ -105,8 +111,9 @@ created.
 - The FS protocol source, generated file, and primary gRPC service now use
   `sysrunc` names. The legacy gRPC service and compatibility executable names
   remain available for rolling socket clients and existing L0 Sysbox workloads.
-- The isolated 218 test uses local images. A complete Dockerfile build passed;
-  published image/Chart acceptance and L0 node-level runtime rollback remain open.
+- The older isolated 218 source test used local images. The later published
+  `v0.1.2` image and Chart passed rootfs copy and selected proc path checks.
+  L0 node-level runtime rollback remains open.
   The `/var/lib/k0s` fixture only verifies persistent special-directory
   handling; running a k0s service is outside this CKM K3s acceptance scope.
 
