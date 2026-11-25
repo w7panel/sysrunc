@@ -217,4 +217,6 @@ Four L2 status checks, the seven-file probe, nginx HTTP, and three persistent
 PVC markers passed. Same-image revision 52 preserved K3s, daemon, agent, and
 L2 Pod identities. This closes the exact random-directory fast-path gate for
 the local build; other FUSE resources and published artifact acceptance remain
-open. See `INTEGRATION_218.md` for hashes and identities.
+open. The current source Chart package also passed a same-image revision 53
+upgrade without changing these identities. See `INTEGRATION_218.md` for hashes
+and identities.

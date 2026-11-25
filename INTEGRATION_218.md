@@ -936,3 +936,10 @@ FS 或 L0 新运行时验收。
   `getdents-observe`、上一稳定 `getdents-safe` 和 admission 使用的
   `218-20261123g`。导入用压缩包及误导性实验探针已删除。清理后 L0
   CKM restartCount 仍为 22，四个 L2 Pod 均 1/1 Ready。
+- 当前源码的 Chart 经 `make chart` 的 lint、host 与 nested 渲染通过，
+  打包 `dist/sysrunc-0.1.0.tgz` SHA256 为
+  `28bf23fd9003976364b5c881830f1805d726a99cc22aeeae223cfd6a2222b8ea`。
+  校验后在隔离 L1 以相同镜像升至 revision 53 `deployed`；CKM UID、
+  K3s restartCount 22、FS PID 6179、snapshotter PID 19792、agent 和
+  FS/ticker Pod UID 均未变化，目录/UUID 探针继续通过。此 Chart 仍是本地
+  包，尚非发布仓库制品。

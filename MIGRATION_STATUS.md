@@ -25,7 +25,7 @@ This is a local-image source integration result. L0 still has the older
 Sysbox installation for other workloads. The final image has not been
 published or accepted as a release artifact. The L0 test runtime is installed
 by isolated Helm release `sysrunc-l0-it`; L1 currently runs the complete,
-locally built `sysrunc-it:218-20261125-getdents-observe` image at Helm revision 52.
+locally built `sysrunc-it:218-20261125-getdents-observe` image at Helm revision 53.
 An installer DaemonSet rollout now preserves FS and snapshotter in an
 independent L1 cgroup. The first full-image rollout at revision 30 disconnected
 existing FUSE mounts; the corrected revision 33/34 rollout kept both daemon
@@ -61,6 +61,8 @@ and the directory probe checked shared offsets, rewind, and relative-path
 containment. Four L2 Pods, the seven-file probe, HTTP, and persistent PVC
 markers passed. A same-image revision 52 upgrade preserved the K3s, FS,
 snapshotter, agent, FS Pod, and ticker Pod identities.
+The current source Chart package also passed a same-image revision 53 upgrade
+without changing those identities; it remains an unpublished local artifact.
 The old `FsState` route only synthesized a `/lib/modules/<kernel-release>`
 link; no current sysrunc runtime path calls it, so no replacement mount is
 created.
