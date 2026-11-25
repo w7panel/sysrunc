@@ -45,6 +45,22 @@ RUN printf '%s/v3.20/main\n%s/v3.20/community\n' "$ALPINE_MIRROR" "$ALPINE_MIRRO
     && ! readelf -l /tmp/libfuse-build/util/fusermount3 | grep -q INTERP \
     && ! readelf -l /tmp/fuse-overlayfs-src/fuse-overlayfs | grep -q INTERP
 
+# K3s' minimal rootfs has no glibc loader. Build rsync with ACL and xattr
+# support as a static binary so empty PVC seeding works inside the CKM.
+FROM alpine:3.20 AS rsync-helper
+RUN apk add --no-cache build-base binutils curl popt-dev acl-dev zlib-dev
+RUN curl -fL --retry 3 --connect-timeout 5 --max-time 60 https://download.samba.org/pub/rsync/src/rsync-3.2.7.tar.gz -o /tmp/rsync.tar.gz \
+    || curl -fL --retry 3 --connect-timeout 10 --max-time 120 https://gh-proxy.org/https://github.com/RsyncProject/rsync/archive/refs/tags/v3.2.7.tar.gz -o /tmp/rsync.tar.gz
+RUN printf '%s/v3.20/main\n%s/v3.20/community\n' https://mirrors.tuna.tsinghua.edu.cn/alpine https://mirrors.tuna.tsinghua.edu.cn/alpine > /etc/apk/repositories \
+    && apk add --no-cache autoconf automake acl-static
+RUN test -s /tmp/rsync.tar.gz \
+    && mkdir /tmp/rsync-src \
+    && tar -xzf /tmp/rsync.tar.gz -C /tmp/rsync-src --strip-components=1 \
+    && cd /tmp/rsync-src \
+    && LDFLAGS=-static ./configure --disable-openssl --disable-xxhash --disable-zstd --disable-lz4 --disable-md2man \
+    && make -j2 \
+    && ! readelf -l rsync | grep -q INTERP
+
 FROM ${BASE_IMAGE}
 
 ARG sys_arch
@@ -96,10 +112,10 @@ RUN wget "${GITHUB_PROXY}https://github.com/kubernetes-sigs/cri-tools/releases/d
 COPY dist/bin/generic /opt/sysrunc/bin/generic
 
 # The inner K3s launcher invokes rsync through the bundled Sysrunc tool path.
+COPY --from=rsync-helper /tmp/rsync-src/rsync /opt/sysrunc/bin/generic/rsync
 # fuse-overlayfs backs the mount.fuse3 shim that stands in for the generic
 # mount helper missing from minimal K3s images; without it the launcher fails
 # its dependency check on every pass.
-RUN cp -a /usr/bin/rsync /opt/sysrunc/bin/generic/rsync
 # The inner K3s rootfs has no glibc loader. Both helpers must be static so
 # they remain executable after the installer container exits.
 COPY --from=fuse-helper /tmp/libfuse-build/util/fusermount3 /opt/sysrunc/bin/generic/fusermount3

@@ -1207,3 +1207,39 @@ FS 或 L0 新运行时验收。
 - 因此首次 sidecar spec 错误仅在后续自动恢复 Ready 时可忽略；持续
   `StartError` 仍是失败。本轮验证了发布镜像在 `local-path` 上的 L2
   rootfs 持久化，未验证 CSI StorageClass。
+
+## 2026-11-25 rootfs 复制与 seccomp 快路径发布验收
+
+- 提交 `ecaa32b` 的 rootfs 复制恢复与三个只读 UTS 文件快路径先以
+  `w7panel-sysrunc:v0.1.1` 发布。218 专用 CKM 的新空 PVC Pod
+  `default/sysrunc-seed-v011-1125` 在首次复制时失败：内层
+  `/usr/local/bin/rsync` 指向动态链接的 CentOS 程序，而最小 K3s rootfs
+  没有 glibc loader。Pod 保留在现场，PVC 未删除。
+- 修复镜像将 rsync 3.2.7 静态编译，并检查 `readelf` 无 INTERP，
+  `rsync --version` 明确报告 ACLs 和 xattrs。`v0.1.2` 已推送到
+  `ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc`，digest 为
+  `sha256:68a02d1f56570d2e03f9091da3528585dcd549ab1c0397f7dc5e9450a621f4ed`。
+  Chart `sysrunc-0.1.2.tgz` SHA256 为
+  `95ba2ec2bec32a3e7466b7eaa8f83fd04914f76f362765208c85ce636dfffbd1`，
+  已作为 ZPK `w7panel-sysrunc` 1.0.2 版本发布。
+- L0 `default/w7panel-sysrunc` revision 3、L1 同名 release revision 4
+  均为 `deployed`；两层 installer 和 admission 的 imageID 都匹配上述 digest。
+  L1 同版本重施到 revision 5 后，CKM Server UID
+  `b3e7901e-f20e-4f4c-b911-87d43547e0d0`、重启数 3 和测试 Pod UID
+  均未变化。L1 运行中的 runc 与 FS SHA256 分别为
+  `304d03eea145dbd2635e32687b6ce0875d0ba35f5c32ee8349cff980a33629a0`
+  和 `c6e7efcd6e32c9fcf8e7ef689b375e4f3c65454ce9797de03831d4523b108895`，
+  与本地发布构建一致。
+- 原失败的 `sysrunc-seed-v011-1125` 在 0.1.2 下自动恢复 Ready；空 PVC
+  出现 `index.html` 和 `50x.html`，失败标记已清除。写入自定义首页与
+  `persist-v012` 后只重建该 Pod，新 UID
+  `afc44ceb-fbd8-43f6-bdac-cd367223be24` 仍读到两个文件且 HTTP 200。
+  新建 `sysrunc-special-v012-1125` 验证 `/usr/share/nginx/html` 特殊目录
+  首次复制；写入该目录与 `/root` 的标记后重建，UID 由
+  `fce28600-99d9-4baf-9f5b-75668a231580` 变为
+  `3beda2e7-a2b0-4b00-8e5f-64fb8c93f5e5`，标记保留且 HTTP 200。
+- FS Pod `sysrunc-fresh-fs-1125` 的精确 `ostype`、相对路径 `osrelease`
+  和 `version` 打开均得到 `memfd:sysrunc-*` 描述符。四个具名 L2 Pod
+  的状态脚本确认 `sysrunc/SANDBOX_READY`；旧 nginx 与 rootfs HTTP 200，
+  原 PVC 和 `/root/rootfs-marker-1125` 均保留。本轮只使用 L1 唯一的
+  `local-path` StorageClass；CSI 与吞吐量化未运行。所有测试 PVC 保留。

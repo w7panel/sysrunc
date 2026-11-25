@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Built the rsync bundled for nested K3s as a static binary with ACL and xattr support. The first 0.1.1 empty-PVC integration test exposed its missing glibc loader; 0.1.2 fixes the copy path in the minimal K3s rootfs.
 - Made L2 rootfs empty-PVC seeding serial and retryable after an interrupted copy, and published persistent special directories only after a complete rsync. The copy now preserves hard links, ACLs, xattrs, and mapped ownership; image and special mount paths reject symlink traversal.
 - Added seccomp notify read and statx fast paths for the three read-only UTS files `/proc/sys/kernel/{ostype,osrelease,version}`. Other `/proc/sys` paths continue through the existing kernel and FUSE path.
 - Added `make full` to validate and package the Sysrunc Chart, build and push its matching installer image to CCR, and attach the Chart to the `w7panel-sysrunc` ZPK application. The command downloads the ZPK CLI when missing, using the same URL as `w7panel-ckm/.cnb.yml`.
