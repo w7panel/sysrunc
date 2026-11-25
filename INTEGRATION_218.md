@@ -1136,3 +1136,55 @@ FS 或 L0 新运行时验收。
 - 本次新建 CKM 复验了 L1 K3s 冷启动；未在该 CKM 安装 L1 Sysrunc
   Chart，也未运行其 L2 工作负载。L2/PVC 结果来自已有的
   `ckm-sysrunc-fresh-1125`。本轮只有 `local-path` 存储验证。
+
+## 2026-11-25 Sysrunc Chart 重施与 218 复验
+
+- 仓库已有参考 Sysbox 结构的 `charts/sysrunc`，包含 installer、
+  RuntimeClass、RBAC、admission 和 nested agent 模板；无需再创建第二套
+  Chart。`make chart` 的 Helm lint、host 和 nested 渲染均通过。
+- 在 218 隔离 release `default/sysrunc-l0-it` 上使用现有本地镜像
+  `docker.io/library/sysrunc-it:218-20261125-oci-security-exec` 及
+  `--reuse-values` 重施源码 Chart，revision 14→15 `deployed`。
+  installer DaemonSet 1/1 Ready、admission Deployment 1/1 Ready；
+  `sysrunc` 与旧 `sysbox-runc` RuntimeClass 均存在，旧 Sysbox
+  admission Deployment 1/1 Ready。
+- `ckm-sysrunc-security-1125` 仍为 Ready；其 Server 内 exec 的
+  `CapEff=000001ffffffffff`、iptables 和 `route_localnet` 写权限检查
+  通过。已有 `ckm-sysrunc-fresh-1125` 的 nginx、FS L2 Pod 仍使用
+  `sysrunc/SANDBOX_READY`，UID 未变；两个 `local-path` PVC 仍 Bound，
+  nginx HTTP 200，FS Pod 可读取 `/proc/meminfo`、UUID 并写入 `/tmp`。
+  此次是相同本地镜像的 Chart 重施验证，未发布 Sysrunc 镜像或 Chart，
+  也未在新建 CKM 上安装 L1 Chart。
+
+## 2026-11-25 发布制品与内外层 release 统一
+
+- 完整镜像已推送至
+  `ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc:v0.1.0`，digest
+  `sha256:075d7513282b9200387993c6a5e12578f5691a35f5aaffd5ba6a8e8e961663ab`。
+  仓库设置公开后，无 Docker 凭据的 manifest 查询通过。Helm Chart
+  `sysrunc-0.1.0.tgz` 作为 ZPK 应用 `w7panel-sysrunc` 的 1.0.0 版本附件
+  发布，现场包 SHA256 为
+  `b0be166ebded8bf8b8f845733c440b2756019c8e523f091c41015630f8c48431`。
+- L0 原隔离 release `default/sysrunc-l0-it` 保留卸载历史，安装相同
+  values 的新 release `default/w7panel-sysrunc`，revision 1 `deployed`。
+  installer DaemonSet `w7panel-sysrunc-installer` 1/1 Ready，admission
+  Deployment `w7panel-sysrunc-admission` 1/1 Ready，均使用已发布 CCR 镜像。
+  旧 Sysbox 安装未改动。
+- 专用 CKM `k3k-console-164315/ckm-sysrunc-fresh-1125` 的 L1 旧 release
+  `default/sysrunc` 保留卸载历史，新 release `default/w7panel-sysrunc`
+  revision 2 `deployed`。安装时 agent 更新触发 K3s 重启，导致等待中的
+  Helm 客户端退出，revision 1 留在 `pending-install`；跳过卸载钩子清理
+  该记录后重新安装成功。inner agent
+  `w7panel-sysrunc-inner-agent` 1/1 Ready，admission
+  `w7panel-sysrunc-admission` 1/1 Ready，两个 Pod 的 imageID 均为上述
+  CCR digest。运行中 Sysrunc 二进制 SHA256 为
+  `9dd862ae7f9f670763e2b03ef40c1a8e70d451f211d4f5830dd35eafbdde94d8`，
+  与已发布镜像内 `/opt/sysrunc/bin/generic/sysrunc` 一致。
+- 只重建该 CKM 内的两个具名测试 Pod，未删除 PVC。nginx Pod UID
+  `04d398a2-aca1-4ec5-845c-981eb92c6f73`，FS Pod UID
+  `7be02209-7fe4-4248-ae31-d02c350a9b17`；两者状态脚本通过，CRI
+  sandbox 都是 `sysrunc/SANDBOX_READY`。nginx HTTP 200，webroot 中
+  `index.html`、`50x.html` 及原有标记均存在，`/srv/data` 标记保留。
+  FS Pod 可读 `/proc/sys/kernel/random/uuid` 和 `/proc/meminfo`。
+  本轮未在另一专用 CKM `ckm-sysrunc-security-1125` 安装内层 Chart，
+  也未测试 CSI StorageClass。

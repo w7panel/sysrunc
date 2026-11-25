@@ -11,7 +11,7 @@ compatRuntimeClasses: false
 installer:
   enabled: true
   image:
-    repository: ghcr.io/w7panel/sysrunc-deploy-k3s
+    repository: ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc
     tag: ""
     pullPolicy: Always
   podLabels: {}

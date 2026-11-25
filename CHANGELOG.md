@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added `make full` to validate and package the Sysrunc Chart, build and push its matching installer image to CCR, and attach the Chart to the `w7panel-sysrunc` ZPK application. The command downloads the ZPK CLI when missing, using the same URL as `w7panel-ckm/.cnb.yml`.
 - Sent opted-in ticker `read_loadavg` requests through each container's cancellable worker goroutine, so request handling follows container task lifecycle.
 - Deferred `getdents64` seccomp requests with nonzero high count bits to the kernel: the syscall takes a 32-bit count, and interpreting the full 64-bit register could write beyond the caller's requested buffer.
 - Restored Sysbox's system-container capability, AppArmor, and `/proc` OCI spec conversion for rootfs-backed nested containers, including `runc exec` processes. CKM had to declare `NET_ADMIN`, `SYS_ADMIN`, `SYS_PTRACE`, Unconfined AppArmor, and Unmasked proc explicitly because Sysrunc omitted this conversion; root processes now receive the runtime's effective capabilities and writable namespaced proc paths without CKM-specific security overrides. The first 218 test passed K3s startup but `kubectl exec` still lacked `NET_ADMIN`, which exposed the missing exec path.

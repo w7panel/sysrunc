@@ -3,6 +3,23 @@
 This chart installs the Sysrunc Kubernetes resources, including the runtime
 installer and admission backend.
 
+## Publish
+
+Set `ZPK_IDC_PASSWORD`, then run `make full` from the repository root. The
+command validates host and nested renders, packages the `name` and `version`
+from `Chart.yaml`, builds and pushes
+`ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc:v<version>`, and attaches
+the Helm package to the `w7panel-sysrunc` application at `zpk.idc.w7.com`.
+The package is written to `dist/charts/`. If `zpk` is absent, Make downloads
+the Linux amd64 CLI to `dist/tools/zpk` from the same release URL used in
+`w7panel-ckm/.cnb.yml`. To publish a new version, update `Chart.yaml` first;
+`VERSION` must match that version.
+
+Use the Helm release name `w7panel-sysrunc` in both the outer cluster and
+each CKM inner cluster. The installer and admission workloads keep their
+separate resource names under that release; by default they use the same
+installer image repository and tag.
+
 ## Values
 
 ### Installation mode
@@ -61,13 +78,13 @@ installer tag is empty, the chart defaults it to `v{{ .Chart.AppVersion }}`.
 
 | Value | Default | Description |
 | --- | --- | --- |
-| `installer.image.repository` | `ghcr.io/w7panel/sysrunc-deploy-k3s` | Installer image repository. |
+| `installer.image.repository` | `ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc` | Installer image repository. |
 | `installer.image.tag` | `""` | Installer image tag; defaults to `v{{ .Chart.AppVersion }}`. |
 | `admission.image.repository` | `""` | Optional admission image repository override; defaults to `installer.image.repository`. |
 | `admission.image.tag` | `""` | Optional admission image tag override; defaults to `installer.image.tag`. |
 | `admission.image.pullPolicy` | `""` | Optional admission pull policy override; defaults to `installer.image.pullPolicy`. |
 
-Images are pulled directly from GHCR by default.
+Images are pulled directly from the public CCR repository by default.
 
 ### Installer
 
@@ -103,7 +120,7 @@ For non-k3s clusters, set `admission.containerdConfigPath` to the host
 containerd config directory containing `config.toml`:
 
 ```bash
-helm upgrade --install sysrunc ./charts/sysrunc \
+helm upgrade --install w7panel-sysrunc ./charts/sysrunc \
   --set admission.enabled=true \
   --set admission.containerdConfigPath=/etc/containerd
 ```
