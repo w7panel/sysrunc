@@ -1,0 +1,116 @@
+//
+// Copyright 2019-2020 Nestybox, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+package nsenter
+
+import (
+	"os"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/sirupsen/logrus"
+)
+
+type zombieReaper struct {
+	mu     *sync.RWMutex
+	signal chan bool
+}
+
+var childWaitMu sync.RWMutex
+
+// ProtectChildWait keeps the nsenter reaper from claiming a child that another
+// subsystem started and must wait for itself.
+func ProtectChildWait() func() {
+	childWaitMu.RLock()
+	return childWaitMu.RUnlock
+}
+
+func newZombieReaper() *zombieReaper {
+
+	zr := &zombieReaper{
+		mu:     &childWaitMu,
+		signal: make(chan bool),
+	}
+
+	go reaper(zr.signal, zr.mu)
+	return zr
+}
+
+func (zr *zombieReaper) nsenterStarted() {
+	zr.mu.RLock()
+}
+
+func (zr *zombieReaper) nsenterEnded() {
+	zr.mu.RUnlock()
+}
+
+func (zr *zombieReaper) nsenterReapReq() {
+	select {
+	case zr.signal <- true:
+		logrus.Debugf("nsenter child reaping requested")
+	default:
+		// no action required (someone else has signaled already)
+	}
+}
+
+// reapProcessAsync waits for the given process in a background goroutine
+// and triggers a reaper sweep when it exits. Use this at the end of an
+// nsenter operation so the caller can release the RLock without blocking
+// on a child whose exit may be delayed by fuse_flush.
+func (zr *zombieReaper) reapProcessAsync(p *os.Process) {
+	go func() {
+		p.Wait()
+		zr.nsenterReapReq()
+	}()
+}
+
+// Go-routine that performs reaping
+func reaper(signal chan bool, mu *sync.RWMutex) {
+	var wstatus syscall.WaitStatus
+
+	for {
+		<-signal
+
+		// Use TryLock instead of Lock to avoid blocking subsequent RLock
+		// callers. Go's sync.RWMutex implements writer-preference: a pending
+		// Lock() blocks all new RLock() calls. If an nsenter child triggers
+		// a FUSE request back to sysbox-fs, the FUSE handler needs RLock to
+		// start a new nsenter. A blocking Lock() here would prevent that
+		// RLock, causing a deadlock. TryLock avoids this by simply skipping
+		// the reap cycle when nsenters are active
+		for !mu.TryLock() {
+			time.Sleep(time.Millisecond * 100)
+		}
+		for {
+			// WNOHANG: if there is no child to reap, don't block
+			wpid, err := syscall.Wait4(-1, &wstatus, syscall.WNOHANG, nil)
+			if err != nil {
+				if err != syscall.ECHILD {
+					logrus.Warnf("reaper: wait failed: %v", err)
+				}
+				break
+			}
+			if wpid == 0 {
+				logrus.Debugf("reaper: nothing to reap")
+				break
+			}
+
+			logrus.Infof("reaper: reaped pid %d", wpid)
+		}
+		mu.Unlock()
+	}
+}

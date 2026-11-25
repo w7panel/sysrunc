@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sysrunc-l2-pvc-uuid-1124
+  namespace: default
+spec:
+  runtimeClassName: sysrunc
+  restartPolicy: Never
+  containers:
+    - name: nginx
+      image: ccr.ccs.tencentyun.com/afan-public/nginx:latest
+      imagePullPolicy: IfNotPresent
+      volumeMounts:
+        - name: webroot
+          mountPath: /usr/share/nginx/html
+        - name: data
+          mountPath: /srv/data
+  volumes:
+    - name: webroot
+      persistentVolumeClaim:
+        claimName: sysrunc-l2-webroot-uuid-1124
+    - name: data
+      persistentVolumeClaim:
+        claimName: sysrunc-l2-data-uuid-1124

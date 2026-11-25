@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sysrunc-skill-fs-1123
+  namespace: default
+  annotations:
+    sysrunc.io/fs: "true"
+spec:
+  runtimeClassName: sysrunc
+  restartPolicy: Never
+  containers:
+    - name: nginx
+      image: ccr.ccs.tencentyun.com/afan-public/nginx:latest
+      imagePullPolicy: IfNotPresent

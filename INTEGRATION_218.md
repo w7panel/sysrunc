@@ -1,0 +1,938 @@
+# 218 集群集成测试（2026-11-23）
+
+## 范围与现场
+
+- L0 kubeconfig：`/root/.kube/218.config`，单节点 K3s `server1`。
+- L0 正式 `default/w7panel-sysbox-installer` DaemonSet 仍为 1/1 Ready；
+  `sysbox-runc` 和 `sysbox-runc-lite` RuntimeClass 仍存在。本次未卸载或替换它们。
+- 新建隔离 CKM：`k3k-console-164315/ckm-sysrunc-it-1123`，L1 Server
+  使用 L0 `sysbox-runc` 且 `hostUsers: false`。L0 尚未部署新 `sysrunc`
+  RuntimeClass，因此此 CKM 不能证明新运行时已完成宿主迁移。
+- L1 `default/sysrunc` Helm release revision 7，测试镜像
+  `docker.io/library/sysrunc-it:218-20261123g` 只导入 L1 containerd，
+  未发布到外部仓库。镜像基于已有 Sysbox deploy image，携带工作区构建的
+  sysrunc 二进制和本次临时构建的静态 `fusermount3`。当前 Chart 为
+  `deployed`，其内层二进制 SHA256 为
+  `0c4a540eae212371f3aff806a2a012a526827f9ca0a928dfea3ceb39845f6f6c`。
+
+## 已验证
+
+| 检查 | 结果 |
+| --- | --- |
+| L1 agent、admission | 均 1/1 Ready；FS 与 snapshotter socket 存在 |
+| CRI handler | `sysrunc` 的 `BinaryName` 指向 `sysrunc-inner/releases/.../bin/generic/sysrunc` |
+| 二进制一致性 | 初轮 L1 与本地 `sysrunc` SHA256 均为 `803a889f3c6fb30d00faea5216df0ba3a9403bf1e8ea5ef912aed2d7d57d7c84`；当前镜像值见上方 |
+| 普通 Pod | `default/sysrunc-it-lite` 为 Running；CRI sandbox `runtimeHandler: sysrunc`、`SANDBOX_READY`；nginx HTTP 返回欢迎页 |
+| admission | 新 `sysrunc` FS Pod 不再自动设置 `spec.hostUsers`；专用 CKM 实测该字段为空 |
+| Skill 预检 | `sysbox-in-sysbox-test` 的 `00-check-prereqs.sh` 通过；其余脚本硬编码旧 Chart/handler，按相同断言手动适配执行 |
+| L0 FUSE | 专用 CKM Server 的 `/dev/fuse` 是字符设备且可打开；其 Pod 为 `sysbox-runc`、`hostUsers: false`，仅证明旧 L0 基线 |
+| L2 空 PVC 初始化 | `sysrunc-skill-webroot-1123` 的 nginx `index.html`、`50x.html` 均存在，Pod 无 `sysbox/volume-init` 注解 |
+| L2 重建持久化 | 重建前写入 webroot PVC 与 `/srv/data` 标记；新 Pod `sysrunc-skill-nginx-1123-74c74c77df-ptpf7` 中两处标记均保留 |
+| L2 CRI 统计 | 新 Pod sandbox 为 `sysrunc`、`SANDBOX_READY`；可写层 mountpoint 非空，嵌套 kubelet `/stats/summary` 返回节点统计 |
+
+## 失败与边界
+
+1. 首轮普通 Pod 因 runc 未带 `seccomp` build tag 而失败。根 `Makefile`
+   已加 tag，重建后普通 Pod 通过。
+2. 首轮 FS daemon 未启动。内层 agent 现启动并检查 FS；重建后 socket 和
+   容器预注册可用。
+3. FS 预注册曾因 CKM 精简镜像无法执行动态链接 `fusermount3` 失败。
+   本次临时测试镜像使用从 Debian fuse3 3.17.2 源码编译的静态 helper，
+   预注册随后成功。正式 Dockerfile 已改为构建静态 helper；本地镜像
+   `sysrunc-it:218-20261123h` 构建成功（ID `sha256:1038b3d43ff6e4fe2500f719689a5b5105f5abb9f9f071f188452b81c5583d27`），
+   容器内 `ldd` 显示 helper 无动态依赖，`fusermount3 --version` 为 3.17.2。
+   此镜像尚未导入 218 或发布。
+4. 初轮 `sysrunc` handler 不支持 user namespace，admission 自动设置
+   `hostUsers: false` 的 FS Pod 被 kubelet 拒绝。改为不设置后，Pod 进入
+   OCI 创建，先报 UID/GID 映射缺失；加入无映射注册后，又报文件挂载的
+   传播标志错误。临时修正文件挂载标志后，继续触发 runc 的 `/proc/sys`
+   安全检查：`cannot be mounted because it is inside /proc`。进一步将
+   例外限定为 sysrunc FS 的 FUSE 源，并去掉该目录的传播标志后，OCI
+   初始化写入 `net.ipv4.ip_unprivileged_port_start` 曾报文件不存在。随后修正
+   FS nsenter 与新版 runc 的握手和 PID 协议、相同 user namespace 的 `setns`、
+   启动时递归读取 FUSE `cap_last_cap`，以及相同 user namespace 下 FUSE
+   属性的 UID/GID。专用 CKM 复测已跨过 sysctl 错误，下一步在加载 seccomp
+   notify filter 时遇到 `device or resource busy`。L0 CKM Server 仍用旧
+   `sysbox-runc`，其进程已有 1 个继承的 seccomp filter；这与内核拒绝第二个
+   notify listener 的行为一致，尚未通过改用新 L0 `sysrunc` 复验。失败 FS
+   Pod 已删除；临时测试二进制已恢复为 Chart 版本，当前 runc SHA256 为
+   `0c4a540eae212371f3aff806a2a012a526827f9ca0a928dfea3ceb39845f6f6c`，
+   活动 FS 进程 SHA256 为
+   `db41eaa7bbcf6889b3d263685369b19355913b2fddee7fa08fab42d61a649492`。
+   FS Pod 仍未 Ready，seccomp notify 端到端仍未验收。当前 runc 也缺少
+   idmapped mount 支持，不能伪造能力声明。
+5. L0 正式 `sysrunc` RuntimeClass 不存在。当前宿主仍有多个业务 Pod
+   使用旧 `sysbox-runc`/`sysbox-runc-lite`。新宿主安装脚本现只安装独立
+   `sysrunc` 入口，但配置 containerd 需要重启单节点 K3s；尚未执行会影响
+   业务 Pod 的宿主安装或旧组件移除。
+
+失败 FS Pods 已删除以停止反复创建 sandbox。保留专用 CKM、Helm release
+和成功的 `sysrunc-it-lite` Pod，供复核；本轮持久化 Deployment 已缩容
+至零，保留两个 Bound PVC 和标记；未触及其他 CKM。
+
+仓库内 `skills/sysrunc-in-sysrunc-test/scripts/check-status.sh` 已在该 CKM
+实跑通过；它覆盖旧 L0 基线、新 L1 handler 和普通 L2 sandbox，不代替
+FS 或 L0 新运行时验收。
+
+## 2026-11-23 L0 debug Pod 续测
+
+- 按要求创建固定到 `server1` 的 privileged debug Pod
+  `default/sysrunc-node-debug-1123`，通过 `/host` 和 `chroot /host` 检查宿主，
+  没有使用 SSH。原 containerd 模板已备份为
+  `config-v3.toml.tmpl.before-sysrunc-20261123`，SHA256
+  `4aa4fd360b7071ee74fee0470dd6f8388ad26388f73cc2cbd74506822e98cbe1`。
+- 本地测试镜像 `sysrunc-it:218-20261123k` 的 ID 为
+  `sha256:2086d93cf5b7ff3de19d9ada3524869ff01cad4c551835c1d2ce341031422d95`，
+  经 debug Pod 导入 L0 K3s containerd。压缩包传输前后 SHA256 均为
+  `f0fe3bed7510c8d30a38258c9f15e0a2d50f1d1a494ea49df6dee1ceaf555aa5`。
+  仍是本地集成镜像，未发布。
+- L0 `default/sysrunc-l0-it` Helm revision 1 已安装，`sysrunc` RuntimeClass
+  存在；宿主 `sysrunc`、`sysrunc-fs`、`sysrunc-snapshotter` 服务均 active。
+  CRI `sysrunc` handler 的 `BinaryName=/usr/bin/sysrunc`、
+  `snapshotter=sysrunc`；三个二进制 SHA256 分别为
+  `48a3b496c250786acab0f1a0a62f46542c6a0d21619408105c286d65e6a96d73`、
+  `88be176037d3a010f4bc3b7902f9a8e831629fd208c98f21f286342f9d88c946`、
+  `6806128214cdb7e58841396a7c9037461fd7e798e85dcd9b5f95ac1d118dd4c4`。
+  旧 `sysbox-runc` 和 `sysbox-runc-lite` handler 仍在，未迁移业务。
+- 首轮安装因扫描到 zombie 进程不可读的 `mountinfo` 失败；脚本已排除
+  zombie。第二轮安装发现旧脚本错误地删除 `sysbox-runc` Pod；升级时另一段
+  旧迁移逻辑再次删除它们并 cordon 节点。已立即停止该轮安装、uncordon，
+  修正两处选择条件并加入无宿主 `sysrunc` Pod 时拒绝自动迁移的保护。
+  受影响的旧 Pod 由控制器重建；最后核对旧 `sysbox-runc` Pod 均 Running、
+  专用 CKM Server 2/2、节点 Ready 且可调度。此过程造成业务 Pod 重启，
+  不能视为无扰动安装。
+- `sysrunc.service` 原先调用 FS 不支持的 `--version` 导致失败，已修正。
+  上轮留下 `Containers:null` 的空 FS 检查点，已通过 debug Pod 移至
+  `/var/lib/sysrunc-deploy-k8s/fs-restart-empty-20261123.json`；脚本新增空检查点
+  判定。宿主并存 Bats 6 项通过。
+- **L0 `sysrunc` 仍不能承载 `hostUsers:false` 的 L1 Server Pod。** CRI
+  `runtimeHandlers[name=sysrunc].features` 未报告 `user_namespaces`，尽管
+  snapshotter 插件报告 `remap-ids`。根因是当前 `sysrunc features` 缺少
+  `linux.mountExtensions.idmap.enabled`，而旧 `sysbox-runc features` 包含该项。
+  必须实现真实 idmapped mount 支持并复测，不能仅伪造 feature 声明。
+  因此专用 CKM 仍运行在旧 L0 `sysbox-runc`，L0 迁移和 FS/seccomp notify
+  端到端验收仍未通过。
+- L0 普通 Pod `default/sysrunc-l0-smoke-1123` 使用 `runtimeClassName:sysrunc`
+  启动并 Ready；通过 `default/sysrunc-node-debug-1123` 的 `/host` 执行宿主
+  `k3s crictl pods -o json`，确认 sandbox
+  `9d099095061f2ca0615e370af3c0abc5f8f2d938db184a820768835c0ea438d4`
+  为 `runtimeHandler=sysrunc`、`SANDBOX_READY`。debug Pod 内访问
+  `http://10.42.0.25/` 返回 nginx 欢迎页。验收后已删除 smoke Pod；
+  debug Pod 留作后续节点操作。
+
+## 2026-11-23 L0 userns 与专用 CKM 续测
+
+- 修复了 runc 的真实 idmapped mount 路径：OCI runtime-spec 升至 1.2.1，
+  `features` 报告 idmap，宿主侧 `open_tree` + `mount_setattr` 后由容器侧
+  `move_mount` 接入。`make build`、specconv 测试和宿主并存 Bats 6 项通过。
+- 经 debug Pod 导入本地镜像 `sysrunc-it:218-20261123m`，L0 独立 Helm
+  release `default/sysrunc-l0-it` 升至 revision 3；CRI 的 `sysrunc`
+  handler 指向 `/usr/bin/sysrunc`、snapshotter 为 `sysrunc`，并报告
+  `user_namespaces:true`。L0 测试 Pod `default/sysrunc-l0-userns-1123`
+  设 `hostUsers:false` 后 Ready；容器 UID 映射为
+  `0 33357824 65536`，宿主 CRI sandbox
+  `443787d2b7f137f4637017c855d34a7b1d487dc293a22082ac1e26aa9dc3a694`
+  为 `sysrunc/SANDBOX_READY`。安装脚本已在依赖齐全时跳过重复的
+  `apt-get update`，避免 218 Ubuntu 软件源慢导致升级卡住。
+- 本地镜像 `sysrunc-it:218-20261123n` 用于启用 L0 admission，Helm
+  revision 4。新 webhook 仅匹配 `runtimeClassName:sysrunc`，不处理旧
+  Sysbox Pod。专用 CKM 首轮切换失败：CKM controller 原先仅对
+  `sysbox-runc` 添加 rootfs PVC 注解，`sysrunc` Pod 因缺 sidecar 在
+  `/var/lib/rancher/k3s/server` 报权限错误。已在相邻
+  `/root/workspace/w7panel-ckm` 仓库修正注解生成和 runtimeClass 切换逻辑，
+  定向 Go 测试通过；本地 `ko.local:sysrunc-it-20261123b` 镜像经 debug Pod
+  导入并短时用于 218 controller。CNB 仓库推送返回 `UNAUTHORIZED`，
+  该镜像未发布。验证后 controller 已恢复原镜像
+  `docker.cnb.cool/i0358/ai-cvm:1.1.146`、1/1 Ready。
+- 第二轮切换得到 `sysrunc.io/rootfs-rw-layer` 注解和
+  `sysrunc-rootfs` sidecar，但特殊目录还是普通 bind mount；
+  L1 K3s 对 `/var/lib/rancher/k3s/server` 报权限错误。源码为 special
+  path 增加递归 idmapped bind mount，测试通过；通过 debug Pod 原子替换
+  宿主 `/usr/bin/sysrunc`，当前 SHA256 为
+  `9e618e0b5164c0065d0b2d2ccc74aa5fc4536c738369aa8221b43e57648fa75b`。
+  **此二进制更新尚未打入当前 L0 Helm 镜像。**
+- 第三轮切换已越过上述权限错误，K3s 可打开 datastore，但嵌套
+  `overlayfs` 挂载返回 `permission denied`；新 L0 `sysrunc` Pod 内也没有
+  `/dev/fuse`。FS、seccomp notify 和完整 L1/L2 验收仍失败。专用 CKM 已
+  回切 L0 `sysbox-runc`，新 Server Pod 2/2 Ready；旧业务 runtime 未迁移。
+
+## 2026-11-23 L0 FUSE 设备与 L1 K3s 续测
+
+- 修复了带 `sysrunc.io/rootfs-rw-layer` 意图的 Pod 自动取得 `/dev/fuse`
+  的 OCI 设备、bind mount 和设备 cgroup 许可；Pod 无 `/dev/fuse` hostPath。
+  带 `sysrunc.io/fs=true` 的独立 FS Pod 仍走 seccomp notify 注册。
+- 为 L1 发布镜像构建静态 `fuse-overlayfs` 1.17 和 `fusermount3` 3.17.2；
+  Alpine 构建阶段使用阿里云 apk 镜像；本轮未安装宿主 Ubuntu 依赖，因此
+  未更改 218 的 apt 源。Docker 构建中两者 `readelf -l` 均无动态 loader。CKM controller 的
+  Sysrunc rootfs 注解和 runtimeClass 切换修复已通过定向 Go 测试。
+- L0 本地镜像 `sysrunc-it:218-20261123p` 已通过 debug Pod 导入节点，
+  独立 Helm `default/sysrunc-l0-it` 升至 revision 6。宿主
+  `/usr/bin/sysrunc` 与本地构建 SHA256 均为
+  `634c630df40241fdfe1afebf92f7ac9aecc39aadf3001c63adc1c6a18d7d7e7d`。
+  安装器 AppArmor 规则补入实际 `sysboxfs` FUSE 来源在新目录
+  `/var/lib/sysruncfs` 的挂载许可。旧 Sysbox handler 和业务 Pod 保留。
+- 第一次新 FS L1 Server 预注册因 AppArmor `fusermount3: mount failed:
+  Permission denied` 失败；重载规则后越过预注册。随后 idmapped bind
+  mount 的 `/proc/sys` 安全检查用 fd 路径判定而拒绝，已让检查同时使用
+  OCI 来源路径与实际 fd 的文件系统类型。再试到达 sysctl 写入，但 FS
+  虚拟 `/proc/sys/net/ipv4/ip_unprivileged_port_start` 不存在。CKM Server
+  不启用 FS 模式，保留单独的 FS 验收门槛。
+- CKM controller 测试镜像 `ko.local:sysrunc-it-20261123e` 用于专用
+  `ckm-sysrunc-it-1123` 的 runtimeClass 切换；它设置
+  `hostUsers:false`，不设置 FS 注解，选 K3s `native` snapshotter。
+  L0 新 Server Pod 自动获得 `/dev/fuse` 字符设备，UID 映射为
+  `0 807075840 65536`。`fuse-overlayfs` 的初次探测失败：已有 L1
+  持久盘的 `/usr/bin/fuse-overlayfs` 仍指向旧动态 helper，精简 rootfs
+  无法执行；直接挂载也返回 EPERM。`native` 已使 L1 K3s 越过快照器
+  初始化，但 kubelet 报 `/dev/kmsg` 缺失，kube-proxy 报 iptables
+  `Permission denied`，Server 不能 Ready。L1/L2、FS/seccomp notify、
+  重新安装稳定性及发布件验收均未通过。
+- 失败后仅专用 CKM 回切 L0 `sysbox-runc`，Server 恢复 2/2 Ready；
+  线上 CKM controller 恢复镜像 `docker.cnb.cool/i0358/ai-cvm:1.1.146`
+  并 1/1 Ready。新 controller 镜像只导入节点，未推送仓库；新 Sysrunc
+  镜像也仅为本地集成构建。L0 新 release 保留用于后续独立测试。
+
+## 2026-11-23 L1 权限续测
+
+- 独立 L0 Pod `default/sysrunc-netadmin-1123` 使用 `sysrunc`、
+  `hostUsers:false`、`NET_ADMIN` 和 `SYS_ADMIN`，Ready；容器内执行
+  `/bin/aux/iptables -t nat -L POSTROUTING -n` 成功。仅为专用 CKM
+  Sysrunc Server 添加这两项能力，并由 OCI runtime 对带 rootfs 意图的
+  Pod 提供 `/dev/kmsg` 到 `/dev/null` 的 shim，不暴露宿主内核日志。
+- 新本地镜像 `sysrunc-it:218-20261123q` 经 debug Pod 导入，L0 独立
+  Helm release 升至 revision 7。宿主 `/usr/bin/sysrunc` 与构建 SHA256
+  均为 `34819afcebd00f285b97aec802184e89a1d36027a467491abff5905048c5c92f`。
+  新 CKM controller 测试镜像 `ko.local:sysrunc-it-20261123f` 也只导入
+  节点，未发布。
+- 再次切换专用 CKM 后，先前 `/dev/kmsg` 和 iptables 权限错误消失；
+  K3s 仍退出，具体为 kube-proxy 写
+  `/proc/sys/net/ipv4/conf/all/route_localnet` 遇到只读文件系统，以及
+  kubelet bind mount `/var/lib/kubelet` 遇到 `permission denied`。
+  L1 K3s、L2、FS/seccomp notify 及完整迁移仍未验收。
+- 仅专用 CKM 再次回切 `sysbox-runc`，线上 CKM controller 恢复原镜像
+  `docker.cnb.cool/i0358/ai-cvm:1.1.146`。独立 L0 Sysrunc Helm release
+  保留 revision 7；旧业务 RuntimeClass、handler、installer 未卸载。
+
+## 2026-11-23 AppArmor、proc 与 cgroup 续测
+
+- 独立 `hostUsers:false` Sysrunc 测试 Pod 在默认 AppArmor 下即使具有
+  `SYS_ADMIN`，执行 bind mount 仍被拒绝；设置容器 AppArmor
+  `Unconfined` 后同一 bind mount 成功。另一个仅用于测试的 Pod 设置
+  `procMount: Unmasked`，可在其私有网络命名空间写入并恢复
+  `net.ipv4.conf.all.route_localnet`。据此仅为专用 CKM 的 Sysrunc
+  Server Pod 加入两项配置；CKM 定向 Go 测试通过。
+- CKM controller 本地测试镜像 `ko.local:sysrunc-it-20261123g` 经 debug
+  Pod 导入并短时运行。专用 CKM 的 L0 Server Pod 为 `sysrunc`、
+  `hostUsers:false`、`native` K3s snapshotter、AppArmor `Unconfined`、
+  `procMount: Unmasked`。K3s kubelet和 kube-proxy 成功越过前轮的
+  `/dev/kmsg`、iptables、`route_localnet` 与 bind mount 错误，随后
+  kubelet `Failed to start ContainerManager`：创建
+  `/sys/fs/cgroup/kubepods` 遇到 `read-only file system`。L1 Server
+  未 Ready，L1/L2 与 FS 验收仍失败。
+- 再次只回切专用 CKM 至 `sysbox-runc`，Server 2/2 Ready；线上 CKM
+  controller 恢复 `docker.cnb.cool/i0358/ai-cvm:1.1.146`、1/1 Ready。
+  L0 节点 Ready，独立 Sysrunc release 维持 revision 7。上述控制器
+  镜像均未发布。
+
+## 2026-11-24 cgroup、OOM 与 L1 Pod 续测
+
+- 对照 Sysbox 后，确认 L1 容器还需要可写 cgroup v2、委派目录及
+  `init.scope`。独立 `default/sysrunc-cgroup-probe-1124` 设置
+  `hostUsers:false` 后，OCI cgroup mount 为 `ro`；在容器内另挂 cgroup2
+  可得到 `rw`，但创建子组因宿主目录权限被拒。仅将该隔离容器的
+  cgroup 目录及委派文件 chown 给其映射 UID 后，创建子组成功。
+- Sysrunc 源码仅对 rootfs 意图容器把 cgroup OCI mount 改为 `rw`，
+  让 runc 原有委派逻辑生效，并把初始进程移入 `init.scope`。
+  第一次专用 CKM 测试中，kubelet 从 `read-only file system`
+  前进到 `domain-invalid`；加入 `init.scope` 后，K3s kubelet
+  成功启动，但 L1 原生 runc 设置子 Pod 的 `oom_score_adj`
+  返回 `permission denied`。
+- 按 Sysbox 的实现，在进入 user namespace 前为 rootfs 意图容器
+  设置 `-999` 的 OOM 调整下限，然后恢复 OCI 的 QoS 值。再次测试后
+  OOM 错误消失，L1 原生 runc 在打开子进程 mount namespace 时被拒。
+  CKM 源码仅对 Sysrunc L1 Server 增加 `SYS_PTRACE`，定向 Go 测试通过；
+  本地镜像 `ko.local:sysrunc-it-20261124-ptrace` 经 debug Pod 导入节点。
+  第三次测试越过该错误，L1 Pod sandbox 转而因挂载 `sysfs` 得到
+  `operation not permitted`。在 L1 Server 直接执行 `mount -t sysfs`
+  也返回权限错误。**L1 Server 尚未 Ready，L2、FS/seccomp notify、
+  重新安装稳定性及发布件验收仍未通过。**
+- 本地 Sysrunc 测试镜像 `sysrunc-it:218-20261124-final` 的镜像 ID
+  为 `sha256:fd2d5e13f919e2ef9758bd60b73b1826e0330839d249fd66d285b66b0bf82193`；
+  L0 独立 Helm release 为 revision 10。镜像内、构建文件及宿主
+  `/usr/bin/sysrunc` 的 SHA256 均为
+  `3d664ecc5aaf9e8f9184f098bea36b2d0e3b5f2260e8f225c57e9b5f6192bf5d`。
+  该镜像只在本地构建并导入节点，未发布。专用 CKM 已回切
+  `sysbox-runc`，新 Server Pod 2/2 Ready；线上 CKM controller 已恢复
+  `docker.cnb.cool/i0358/ai-cvm:1.1.146`、1/1 Ready。
+
+## 2026-11-24 FS 恢复与独立 Pod 复测
+
+- 节点 `sysrunc-fs.service` 因脏 checkpoint 拒绝启动。经 debug Pod 核对
+  `/run/sysrunc/fs-restart.json` 为 `Clean:false`、无容器记录，宿主及进程
+  mountinfo 未见存活的 `sysruncfs` 挂载；将原文件保存在
+  `/var/lib/sysrunc-deploy-k8s/fs-recovery-20261124-0245/` 后启动服务。
+- 服务恢复后，独立 `default/sysrunc-fs-sysctl-probe-1124` 的下一处失败是
+  FS nsenter 进入 cgroup namespace 返回 `EPERM`。对照 Sysbox nsexec 对
+  宿主拥有的命名空间先于 user namespace 进入的做法，调整 Sysrunc FS
+  的 cgroup namespace 顺序，定向 `go test ./nsenter ./handler/implementations`
+  通过。新 FS 二进制 SHA256 为
+  `faefa3a73c85579dbe01512537409593c995c8819edcca9bbb42e7db115c0bb6`。
+  服务干净停止（`Clean:true`、无容器记录）后通过 debug Pod 更新二进制并
+  重启，旧文件备份于 `/usr/bin/sysrunc-fs.218-20261124-before-cgroup-order`。
+- 该独立 Pod 现为 `1/1 Running`，`/proc/sys/net/ipv4/ip_unprivileged_port_start`
+  读取为 `0`，`/proc/sys` 为 `sysboxfs` FUSE 挂载，容器内新建并卸载
+  `sysfs` 成功。此结果仅覆盖 L0 独立 FS Pod；专用 CKM 仍在 L0 使用
+  `sysbox-runc`，L1 原生 runc 的 `sysfs` 挂载及 L2 验收尚未复测通过。
+  FS 修复仅更新节点二进制，尚未打入 Helm 镜像或发布。
+
+## 2026-11-24 L0 Sysrunc 至 L2 集成验收
+
+- 专用 CKM：`k3k-console-164315/ckm-sysrunc-it-1123`，当前 Server Pod
+  `k3k-ckm-sysrunc-it-1123-server-c9ff6d647-m7sdm` 为 2/2 Ready。
+  L0 Pod 与 CRI sandbox 均为 `sysrunc`，`hostUsers:false`，无
+  `sysrunc.io/fs`；L0 Helm `default/sysrunc-l0-it` revision 10。测试期间
+  旧 Sysbox 安装保留给其他工作负载。
+- L0 原生 runc 在 L1 user namespace 内挂载 `sysfs` 曾返回 `EPERM`。
+  Sysrunc 改为在切换 user namespace 前创建 detached sysfs mount 并通过
+  mount FD 传入。L0 FS listener 不再放在 K3s Server 上，从而避免 L2
+  安装自身 seccomp listener 时返回 `EBUSY`。CKM 控制器镜像
+  `ko.local:sysrunc-it-20261124-reconcile-fs` 已经经 debug Pod 导入节点，
+  只在本地测试；其镜像 ID 为
+  `sha256:baeadbb11f3086f6877f72e5d425c9150426e514ed5c4ade9e1775e52c882bcf`。
+- 新 Server 的 L1 FS 最初因 `/sys/devices/virtual/dmi/id/product_uuid`
+  在用户命名空间中不可读而退出。FS 现对 `EACCES` 使用与文件不存在相同
+  的零 UUID 兜底。静态 FS 二进制 SHA256 为
+  `b58fce30d28682c02665763dc86764a493d70259985ceb28a05b1eafe9d48322`。
+  snapshotter 以 `CGO_ENABLED=0` 构建，SHA256 为
+  `66ccf016e4d991076fce8db79be07b146bbfc0d74947adf70afef5cdfad8d671`。
+- L1 cert-manager CSI 原先因 `/tmp/cert-manager-csi-driver`，继而因
+  `/var/lib/kubelet` 不是共享挂载而失败。对照 Sysbox 后，Sysrunc 的
+  PVC 特殊挂载改为 `rshared`，并替换同目标的旧私有挂载。Server 重建后
+  `/var/lib/kubelet`、`/run/k3s`、CSI 目录均为 shared；CSI driver
+  3/3 Running，面板 agent 1/1 Running。L0 节点 `/usr/bin/sysrunc` 经
+  debug Pod 备份更新，当前 SHA256 为
+  `bbcd9e6b8475367df5b81cde348511fdbb4e53ec34f5ca64bc6666dac1ea5da9`。
+- 本地集成镜像 `sysrunc-it:218-20261124-integrated`，镜像 ID
+  `sha256:35e827e49c381b63a719946bc2282775fff2ad356d41c4afc37929d3de445caf`，
+  含同哈希的 Sysrunc、FS 和静态 snapshotter；仅导入 L1 containerd。
+  L1 Helm `sysrunc` revision 11 已部署；agent 1/1 Ready，FS 与
+  snapshotter socket 可查询。L1 containerd 的 `sysrunc` handler
+  `BinaryName` 指向当前 release，snapshotter 为 `sysrunc`。
+- 新建 L2 `default/sysrunc-l2-nginx-uuid-1124` 与
+  `default/sysrunc-l2-fs-uuid-1124` 均 1/1 Ready；CRI sandbox 分别为
+  `SANDBOX_READY`、`runtimeHandler=sysrunc`。FS Pod 有
+  `Seccomp: 2`、`Seccomp_filters: 1`，读取
+  `/proc/sys/net/ipv4/ip_unprivileged_port_start` 得到 `0`，可写入并读取
+  `/tmp` 文件。其 `/proc/sys` 仍显示 `sysboxfs` FUSE 挂载；这里只证明
+  seccomp filter 已安装且实际 FS 功能正常，不把所有 FS 路径都标作无 FUSE。
+- `local-path` 的两个 PVC
+  `default/sysrunc-l2-webroot-uuid-1124` 与
+  `default/sysrunc-l2-data-uuid-1124` 均 Bound。nginx 镜像的
+  `index.html`、`50x.html` 自动初始化到空 webroot PVC；webroot 与
+  `/srv/data` 标记跨 Pod 重建及 L0 Server 重建均保持，HTTP 读标记返回
+  200。PVC 保留供复查。L1 没有其他 CSI StorageClass，本轮只覆盖
+  `local-path`。
+- 对相同 Chart 与集成镜像原样升级到 revision 11 后，L0 Server 的
+  K3s container ID 与 restartCount、L1 agent UID 与 restartCount 均未变，
+  三个 L2 Pod 仍为 1/1 Ready。Chart 包
+  `dist/sysrunc-0.1.0.tgz` SHA256 为
+  `6317035fca1fbf37d40e2e81a299fe3fffd0ed0a975b0d114b760ac9d358ffbe`。
+  这是源码本地镜像验收；发布镜像与 Chart 仓库制品尚未验收，L0 Helm
+  镜像也尚未更新到这次构建，节点上的 runtime 仍依赖手动更新。
+
+## 2026-11-24 完整 Dockerfile 镜像与 L0/L1 续测
+
+- 修正 `deploy/Dockerfile.sysrunc-k3s` 的 CentOS Stream DNF 来源为可配置的
+  阿里云镜像，并从同一镜像下载 kubectl RPM。完整 Dockerfile 构建成功；
+  `kubectl version --client` 为 v1.32.13，`fusermount3` 与
+  `fuse-overlayfs` 均无动态链接器。最终本地镜像
+  `sysrunc-it:218-20261124-verified` ID 为
+  `sha256:420c5e667c3acd70bc509462ece2af2a4ced14a81edb96e9c0cb3ac4c4c251bf`。
+  镜像内 Sysrunc、FS、snapshotter SHA256 依次为
+  `bbcd9e6b8475367df5b81cde348511fdbb4e53ec34f5ca64bc6666dac1ea5da9`、
+  `b58fce30d28682c02665763dc86764a493d70259985ceb28a05b1eafe9d48322`、
+  `66ccf016e4d991076fce8db79be07b146bbfc0d74947adf70afef5cdfad8d671`。
+- 安装器原先仅按版本号决定是否更新，版本同为 `0.1.0-0` 时会跳过新镜像
+  的二进制。现增加镜像与宿主二进制哈希比较；K3s containerd 配置语义
+  未变时跳过共享 K3s 重启。宿主并存 Bats 8 项及 Bash 语法检查通过。
+- 完整 Dockerfile 的首个镜像
+  `sysrunc-it:218-20261124-dockerfile`（ID
+  `sha256:333b0e93d82a8a9dda3b753f02bfbcd5ac897d04daaee6c90eea0910b10dcf5c`）
+  已导入隔离 L1，并部署到 Helm `default/sysrunc` revision 13。
+  首轮 Helm 客户端经 L0 Pod 端口转发连接，L1 K3s 重启使连接中断，
+  revision 12 停在 `pending-upgrade`；按相同 revision 的 manifest 回滚后，
+  revision 13 为 `deployed`，agent 实际 imageID 与镜像 ID 一致。
+  L1 release 中运行的是上述首个完整镜像，安装器安全修复只在随后
+  构建的 `verified` 镜像中；三项运行时二进制哈希相同。
+- 最终 `verified` 镜像通过 L0 `default/sysrunc-node-debug-1123` 导入节点。
+  独立 L0 Helm `default/sysrunc-l0-it` 升至 revision 11，installer Pod
+  imageID 为最终镜像 ID。安装日志确认哈希差异触发同版本更新，K3s
+  containerd 配置不变且未重启共享 K3s；仅专用 Sysrunc CKM Server 被
+  删除并重建。宿主三个二进制现与镜像哈希一致；节点 Ready、可调度，
+  旧 Sysbox 工作负载仍运行。
+- 当前专用 Server Pod
+  `k3k-console-164315/k3k-ckm-sysrunc-it-1123-server-c9ff6d647-h25sk`
+  为 2/2 Ready，L0 runtime `sysrunc`、`hostUsers:false`。L1 agent 1/1
+  Ready，cert-manager CSI driver 3/3 Running。Server 重建后，将三个具名
+  L2 测试 Pod 重建；普通、FS、双 PVC Pod 均 1/1 Ready。FS Pod UID 为
+  `bc3e482b-2efc-4480-80ec-94c64f5eac45`，CRI sandbox 为
+  `SANDBOX_READY`、`runtimeHandler=sysrunc`；`Seccomp:2`、
+  `Seccomp_filters:1`。普通与 FS HTTP 均返回 200。webroot 与
+  `/srv/data` 的标记 `sysrunc-webroot-1124`、`sysrunc-data-1124`
+  均保留，两个 `local-path` PVC 保持 Bound。
+- FS Pod 用 Perl 打开 `/proc/sys/kernel/random/uuid` 时，进程内 FD
+  指向 `/memfd:sysrunc-proc-uuid (deleted)`，证明这一精确路径通过
+  seccomp notify 的 `NOTIF_ADDFD` 注入。TAPD 需求所列 `statx`、
+  `getdents64` 和一般 proc 路径匹配尚未实现；`/proc/sys` 仍为
+  `sysboxfs` FUSE 挂载，不能宣称完整绕过 FUSE。
+- 以上镜像均只在本地构建并导入集群，未推送仓库；Chart 也只使用本地
+  `dist/sysrunc-0.1.0.tgz`。因此通过的是完整 Dockerfile 的本地制品
+  集成测试，**发布仓库制品验收仍未运行**。
+
+## 2026-11-24 L0 重复升级复验
+
+- 用相同 Chart、相同 `sysrunc-it:218-20261124-verified` 镜像将独立 L0
+  Helm `default/sysrunc-l0-it` 从 revision 11 升到 12，状态为 `deployed`。
+  专用 CKM Server Pod UID 仍为
+  `b29276c3-3494-4ad6-b7dc-ba62bd5f5ecd`，K3s Server container ID
+  仍为 `containerd://bc06c186c78926c5d36aac7051f7e673ba694b45d1f98f3011028d299ea216eb`，
+  restartCount 仍为 1。L0 installer Pod UID 仍为
+  `e82d13ec-8560-47cd-add3-9e33983d79f4`，restartCount 仍为 0；
+  `server1` Ready。
+- `skills/sysrunc-in-sysrunc-test/scripts/check-status.sh` 对当前 L0 Server
+  与 L2 普通、FS、双 PVC 三个 Pod 分别实跑通过：L0
+  `runtimeClass=sysrunc`、`hostUsers:false`，
+  L1 `sysrunc` handler 的 `BinaryName` 在当前 release 下且 snapshotter
+  为 `sysrunc`，三个 L2 sandbox 均为 `SANDBOX_READY`、handler 为
+  `sysrunc`，L2 `hostUsers` 均未设置。L1 agent 和 CSI driver 均为 1/1
+  Ready；L1 Helm `sysrunc` revision 13 仍为 `deployed`。
+- 普通、FS、双 PVC 三个具名 L2 Pod 均 Running，容器内 HTTP 均返回
+  200。双 PVC Pod 的 `/usr/share/nginx/html/marker.txt` 与
+  `/srv/data/marker.txt` 分别仍为 `sysrunc-webroot-1124`、
+  `sysrunc-data-1124`；nginx `50x.html` 非空，两个 PVC 均 Bound。
+  FS Pod 仍可读取 `/proc/sys/kernel/random/uuid`，当前进程显示
+  `Seccomp:2`、`Seccomp_filters:1`。这不改变上节所述的 FUSE 绕过范围
+  与发布制品未验收的边界。
+
+## 2026-11-24 proc 目录与 statx 快路径续测
+
+- 按 TAPD `1162789787001016334` 扩展 seccomp notify：`openat/openat2`
+  对精确 `/proc/sys/kernel/random` 注入原生 procfs 目录 FD，由内核在此
+  FD 上完成 `getdents64`；相对 `uuid` 打开仍注入 worker 生成的 memfd。
+  `statx` 对这两个精确路径写回调用者缓冲区。`getdents64` 本身无需
+  seccomp trap；`NOTIF_ADDFD` 无法填写 `statx/getdents64` 的输出缓冲区。
+  未命中、被 mask 或带未支持标志的请求继续走内核/FUSE。
+- 完整 Dockerfile 本地镜像 `sysrunc-it:218-20261124-proc-fastpath` ID 为
+  `sha256:f9d3e32e0f6623c4a91d0f6fb720bbb80a1ce00d77e4e54922d395fadf319588`。
+  镜像、工作区和 L1 当前 release 的 runtime/FS SHA256 均为
+  `fba66f493ecfd4c9b5ee5d37ca59e3207060d4ed54696f7254bcad9bf3850428`、
+  `35b3591ae0bf2ada6fa4ec6e9f0f7c1c44cd8a2781ed3349dc90ee55e42a78b4`。
+  `go test ./seccomp` 和 `go test ./libcontainer/sysruncfs` 通过。
+- 隔离 L1 Helm `default/sysrunc` revision 14 已部署此镜像；agent imageID
+  与镜像 ID 一致。安装期间 L1 K3s 重启，三个具名 L2 测试 Pod 已重建。
+  专用 L0 CKM Server 容器的 restartCount 由 1 增至 2；未操作其他 CKM。
+  `check-status.sh` 分别通过：普通、FS、双 PVC Pod 的 CRI sandbox 均为
+  `SANDBOX_READY`、handler `sysrunc`，L0 CKM 仍为 `sysrunc` 且
+  `hostUsers:false`。三者 HTTP 均为 200，两个 PVC 保持 Bound，webroot
+  和 `/srv/data` 标记保留。
+- FS Pod 内的直接 syscall 探针通过：UUID `statx` 为 size=1024、
+  mode=0444；`/proc/sys/kernel/random` 的目录 FD `fstatfs` 类型为
+  procfs `0x9fa0`，`getdents64` 列出 `uuid`；相对 `statx` 仍为
+  size=1024，相对 `openat` FD 指向 `/memfd:sysrunc-proc-uuid` 且读取
+  37 字节。未命中的 `/proc/sys` FD `fstatfs` 类型仍为 FUSE
+  `0x65735546`，普通 proc 文件 `statx` 成功。
+- 当前加速范围仍限于上述两个精确路径。其余虚拟 proc 资源含有容器特定
+  语义，不能直接把宿主 proc FD 注入容器；需要对应的直连 backing provider。
+  这次镜像和 Chart 未发布到仓库，发布制品验收仍未运行。临时 overlay
+  镜像和首次构建的无引用镜像已清理。
+
+## 2026-11-24 七个虚拟 proc 文件直接处理
+
+- `openat/openat2` 对 `/proc/cpuinfo`、`diskstats`、`meminfo`、`stat`、
+  `swaps`、`uptime`、`loadavg` 直接调用已有的容器视角处理器，把快照注入
+  memfd；`statx` 写回对应的虚拟 mode=0444、size=4096。只读 memfd
+  设置了写入、扩容、缩容 seal，并以 `O_RDONLY` 注入；未匹配的路径、
+  mask 和不支持的打开标志继续回退内核/FUSE。
+- `/proc/slabinfo` 在专用 L1 user namespace 中无法读取宿主源文件，
+  首轮集成探针发现它仍是 FUSE FD；该路径已从直接处理列表移除。
+  FUSE 读取现在明确返回 `EACCES`，避免原先的 `EIO`。不能将这个路径
+  记为绕过 FUSE。
+- 完整 Dockerfile 最终本地镜像 `sysrunc-it:218-20261124-proc-handlers-ro`
+  ID 为 `sha256:fa09ee02aa24ffd69ac23476aed1c873b6b5f4c108af06e6dc4419e5ce82b300`。
+  L1 Helm `default/sysrunc` revision 17 已部署，agent imageID 与之相同；
+  安装后的 FS SHA256 为
+  `f9ad44ea1e5717a9f9b300944c932c1c656689b5752e4c24eda0c727ad832630`。
+  使用相同 Chart 和镜像重复升级到 revision 18 后，专用 CKM 的 Pod UID、
+  K3s Server container ID、restartCount，L1 agent UID/restartCount 以及
+  L2 FS Pod UID 均未变化。
+- FS Pod 内的 `proc-files-probe.c` 通过：七个文件均为不可写 memfd，
+  `statx` 为虚拟属性，带 `O_NONBLOCK` 的打开仍是 FUSE FD；相对
+  `/proc/meminfo` 打开与 `statx` 也通过。原 UUID/目录探针复跑通过。
+  三个 L2 Pod 的 `check-status.sh` 均通过，CRI sandbox 为
+  `SANDBOX_READY`、handler `sysrunc`；HTTP 均为 200，两个 PVC 保持
+  Bound 且标记未丢失。`go test ./...` 在 FS 模块通过；修复了内存 FS
+  测试隔离和目录测试对时间戳的不稳定断言。
+- 当前 `/proc/sys` 的其余目录与可写虚拟文件仍通过 FUSE；发布仓库制品
+  验收仍未运行。仅清理了无引用的中间 `proc-handlers`、
+  `proc-handlers-v2` 镜像，保留当前镜像及前一稳定集成镜像。
+
+## 2026-11-24 proc 目录 FD 安全回归
+
+- 发现旧快路径把宿主 `/proc/sys/kernel/random` 目录 FD 注入 L2 后，
+  未命中的相对路径可沿该 FD 解析到宿主 proc，破坏容器视图。已移除
+  `openat/openat2` 的目录 FD 注入；目录及 `getdents64` 回退 FUSE，
+  UUID 和七个只读文件的 memfd、精确 `statx` 快路径保留。
+- `cd fs && go test ./...`、`make build`、完整 Dockerfile 本地构建通过。
+  镜像 `sysrunc-it:218-20261124-proc-dir-safe` ID
+  `sha256:2885330bc69b124873a20208f5f0b3ef32104b2713b3ec9e0b5504bf4e227fbd`。
+  L1 当前 release 的 runtime、FS SHA256 分别为
+  `ba10bb0e55d01a54a4aa17d37d9c75ca5bf8cf2a09b67979fa43a984c6630b80`、
+  `6d7e1a4b540ffd22c83a6fa17d626b5c6798085483bab87c82b7fedf97baabdf`，
+  与本地构建一致。镜像只导入隔离 CKM 的 L1 containerd，未发布。
+- 首次 Helm revision 19 的 `--wait` 因安装器重启 L1 K3s、端口转发
+  断开而停在 `pending-upgrade`。标准回滚到 revision 18 后以
+  `--wait=false` 升至 revision 21，状态 `deployed`；相同 Chart/镜像
+  再次升级至 revision 22。后一次升级未改变 L0 CKM Server 的 Pod UID
+  或 K3s restartCount（8）、L1 agent UID 或 L2 FS Pod UID。
+- K3s 重启后仅重建三个具名 L2 测试 Pod，PVC 保留。更新后的
+  `proc-fastpath-probe.c` 在 FS Pod 中通过：random 目录 FD 的 `fstatfs`
+  为 FUSE `0x65735546`，`getdents64` 含 `uuid`，相对
+  `../hostname` 仍为 FUSE FD；相对 UUID 为 memfd、读取 37 字节，
+  UUID `statx` 保持 size=1024、mode=0444。`proc-files-probe.c` 的七个
+  只读文件 memfd、虚拟 `statx` 和不支持标志回退断言均通过。
+- 三个 Pod 的 `check-status.sh` 均通过：L0 CKM 使用 `sysrunc` 且
+  `hostUsers:false`，L2 sandbox 为 `sysrunc/SANDBOX_READY`，L2 未设置
+  `hostUsers`。三个 HTTP 均返回 200；两个 `local-path` PVC Bound，
+  webroot 与 `/srv/data` 标记分别仍为 `sysrunc-webroot-1124` 和
+  `sysrunc-data-1124`。目录绕过 FUSE 与发布制品验收仍未完成。
+
+## 2026-11-24 worker 生命周期与 rootfs 注解复验
+
+- proc worker 的 `read_uuid` 请求改由对应容器的 goroutine 处理；容器
+  未注册或注销后拒绝读取。旧 `sysbox/rootfs-rw-layer` 注解现在与新注解
+  共用 rootfs 启用判定，使旧注解的 Pod 也获得预期 `/dev/fuse` 与
+  `/dev/kmsg`；新注解值为 `false` 时优先关闭。另补齐
+  `/var/lib/k0s` 持久特殊目录表。本地 FS 全套 Go 测试、worker race
+  测试、runc 定向测试和完整镜像构建通过。k0s 与旧 rootfs 注解尚未在
+  218 另建 Pod 验证。
+- 最终本地镜像 `sysrunc-it:218-20261124-worker-lifecycle` ID 为
+  `sha256:676fc8f5e30646720abfeeff80d4e477970ec9144c214f3fe02fe87c2710fc26`。
+  L1 Helm revision 23 部署该镜像，agent imageID 一致；runtime/FS
+  SHA256 分别为
+  `c82ada710ff6a758f6b38d4fb6c55875f2843fdb6dbdb1280618cf3e2c08d893`、
+  `d689eab09e94e943d78c4eb6c879f9a0886df7a934b1006d7ba70f43746119da`，
+  与本地构建一致。`proc`、`fuse`、`ticker` 三个 worker 进程均在运行。
+- K3s 重启后重建三个具名 L2 测试 Pod，保留 PVC。FS Pod 再次通过
+  random 目录 FUSE 与 `../hostname` 防逃逸探针、UUID memfd 及七个
+  只读 proc 文件探针。三个 `check-status.sh` 均通过，三个 HTTP 200，
+  两个 PVC 标记仍在。相同 Chart 与镜像重复升级至 revision 24 后，
+  CKM Pod UID 与 K3s restartCount（9）、L1 agent UID/restartCount（1）
+  及 L2 FS Pod UID/restartCount（0）均未变化。
+- 这仍是隔离 CKM 的本地镜像集成结果；其余 `/proc/sys` 可写路径和目录
+  仍通过 FUSE，发布镜像与 Chart 验收未运行。
+- 在 revision 24 的隔离 L1 中仅终止 proc worker PID 6123；supervisor
+  于约 3 秒内启动新 PID 36655。原 FS Pod 未重建，随后直接重跑
+  `proc-fastpath-probe` 通过，UUID 仍为 memfd 且读取 37 字节，证明
+  worker 恢复后容器注册可重放。
+
+## 2026-11-24 diskstats worker 与命名迁移复验
+
+- `/proc/diskstats` 直接读取现由 proc worker 中对应容器的 goroutine
+  计算，保留原 cgroup 视角，worker 请求失败时回退原处理器。FS 模块
+  `go test ./...` 和 worker、seccomp、handler race 测试通过。三个组件
+  `cmd/sysbox-*` 源码入口已迁至 `cmd/sysrunc-*`，根/组件 Makefile 与
+  admission Dockerfile 构建入口已更新；完整 `make build` 通过。
+- 最终本地镜像 `sysrunc-it:218-20261124-diskstats-worker` ID
+  `sha256:52b80531103ac669a08c2a4007ca21631174c3d5db0fa8339330b0b5fe41df64`。
+  L1 Helm revision 25 部署该镜像；L1 runtime 与 FS SHA256 为
+  `c82ada710ff6a758f6b38d4fb6c55875f2843fdb6dbdb1280618cf3e2c08d893`、
+  `e12a8dfe19ab0977ca61f189e35c9d3a56b3e0570b7293d7b7fab581683a8521`，
+  与本地构建一致。
+- K3s 重启后仅重建三个具名 L2 Pod，PVC 保留。FS Pod 的目录防逃逸、
+  UUID、七文件探针均通过，其中 diskstats 为只读 memfd、虚拟
+  `statx`、不支持的标志回退 FUSE。三个 `check-status.sh`、HTTP 200、
+  两个 PVC 标记均通过。相同 Chart/镜像升级到 revision 26 后，
+  CKM Server Pod UID 与 K3s restartCount（10）、L1 agent UID/
+  restartCount（1）、FS Pod UID/restartCount（0）均未变化。
+- 此轮仍为本地镜像集成测试；尚未使用发布仓库镜像/Chart，也未验证
+  k0s 与旧 rootfs 注解的实际 Pod。其余虚拟 proc 路径仍需按权限、
+  容器视角和写入语义逐项迁移。
+- 独立 admission Dockerfile 的构建入口也已验证。首次构建因 Docker Hub
+  超时，改用国内基础镜像后发现 `COPY . .` 把 Go 缓存带入上下文而写满
+  Docker 存储；新增 `.dockerignore` 排除缓存，并允许指定 Debian 软件源。
+  使用 DaoCloud 基础镜像、阿里云 HTTP apt 源及 goproxy.cn 后，独立
+  镜像构建通过，容器内 `--version` 输出 `sysrunc-admission`。构建产生的
+  无引用缓存约 2.9 GiB 已清理，临时 admission 镜像也已删除。
+
+## 2026-11-24 swaps worker 与 IPC 源码命名复验
+
+- `/proc/swaps` 的容器视角计算迁入对应容器的 proc worker；seccomp 快路径
+  优先读取 worker，失败时回退原处理器。IPC 源码目录和 Go 包名从
+  `sysboxFsGrpc` 改为 `sysruncFsGrpc`，原 protobuf service、方法名和
+  socket 路径保持线协议兼容。IPC、FS、runc 的 Go 测试、FS 相关 race
+  测试与根目录 `make build` 通过。
+- 复用上轮已验证的完整安装镜像，叠加本轮四个新二进制形成**本地集成镜像**
+  `sysrunc-it:218-20261124-swaps-ipc`，ID
+  `sha256:68a96f559fc291706042eb633f191926bb26e2a0352ab8c037323357022858a4`。
+  本轮完整 Dockerfile 构建因基础依赖缓存清理后下载耗时而中止；因此
+  该镜像仅用于本轮代码的隔离集成测试，不算完整发布制品验收。
+- L1 Helm revision 27 部署该镜像，installer Pod imageID 一致。L1
+  runtime SHA256 为 `6f27bd2d29ff765bce9bce7f5c21d22021fc4994fa67ae56550fa23f8782f748`，
+  FS SHA256 为 `c8907c2a3e5ebb815117da6871d0429d3df5c56f2a86af1fa892b0e0f1d8016c`，
+  与本地二进制一致。K3s 重启后仅重建三个具名 L2 Pod，PVC 未删除。
+- 两组 FS 探针通过；新增的 `/proc/swaps` 断言比较 worker memfd 与
+  `O_NONBLOCK` FUSE 回退的内容，均为 81 字节且一致。三个
+  `check-status.sh` 均通过，L0 CKM 使用 `sysrunc`、`hostUsers:false`，
+  三个 L2 sandbox 为 `sysrunc/SANDBOX_READY` 且未设置 `hostUsers`。
+  三个 HTTP 均为 200；webroot 和 `/srv/data` 标记仍分别是
+  `sysrunc-webroot-1124`、`sysrunc-data-1124`。
+- 相同 Chart 和镜像重复升级至 Helm revision 28 后，L0 CKM Pod UID
+  与 K3s restartCount（11）、L1 agent UID/restartCount（1）、L2 FS Pod
+  UID/restartCount（0）均未变化。
+- 按 `skills/sysrunc-in-sysrunc-test/fixtures/legacy-rootfs-k0s-218.yaml`
+  另建旧 `sysbox/rootfs-rw-layer` 注解测试 Pod 和独立 PVC。Pod 使用
+  `sysrunc` 并注入 rootfs sidecar，Ready、PVC Bound、HTTP 200；
+  `/dev/fuse`、`/dev/kmsg` 存在，`/var/lib/k0s` 为可写 idmapped 挂载。
+  写入 `/var/lib/k0s/marker-1124` 后只重建该 Pod，标记
+  `sysrunc-k0s-1124` 仍在。PVC 保留供复核。该测试验证了持久目录和
+  旧注解路径，不等同于完整 k0s 服务启动验收。剩余 proc 路径和发布
+  制品仍待验收。
+
+## 2026-11-24 cpuinfo worker 复验
+
+- `/proc/cpuinfo` 的容器视角计算迁入每容器 proc worker，seccomp 快路径
+  优先请求 worker，失败时回退原 FUSE handler；tracee PID 丢失时 worker
+  拒绝读取，避免取到宿主 cgroup。FS 全量 Go 测试、worker/seccomp/handler
+  race 测试和 `make build` 通过。
+- 本地集成镜像 `sysrunc-it:218-20261124-cpuinfo-worker` ID
+  `sha256:4c7a169c0c1266c5e80898fa892cca94b0a798b4b9f2e28fc488068e2c9f2b8a`
+  在隔离 L1 Helm revision 29 部署，installer imageID 一致。L1 FS
+  SHA256 `3f3a1da283161572b7fd8bb0d4d372893c973855212e9ebbef1cec0feea73dde`
+  与本地构建一致。该镜像仍是基于前一集成镜像叠加二进制，未发布。
+- K3s 重启后只重建三个具名 L2 Pod，三个 `check-status.sh`、HTTP 200、
+  UUID/目录安全探针和七文件探针均通过。三个 PVC 均 Bound，webroot、
+  `/srv/data`、`/var/lib/k0s` 标记分别仍为 `sysrunc-webroot-1124`、
+  `sysrunc-data-1124`、`sysrunc-k0s-1124`。
+- 首次尝试逐字比较 CPUinfo 快路径与 FUSE 内容失败。检查完整输出后
+  确认唯一差异是两次读取之间变化的 `cpu MHz`；去掉这些动态行后完整
+  内容一致，双方均有 8 个可见处理器。`/proc/swaps` 仍做完整逐字比较。
+  本轮未重复同镜像升级验证，也未完成完整 Dockerfile、发布制品、
+  剩余 proc 路径及 getdents64 的安全直连。
+
+## 2026-11-24 完整镜像与独立 daemon cgroup 复验
+
+- 完整 `deploy/Dockerfile.sysrunc-k3s` 构建成功；Alpine 软件源改为可配置的
+  清华镜像。镜像 `sysrunc-it:218-20261124-cgroup-v2` 的本地 ID 是
+  `sha256:e91066c44518dd277305e585cf53e15d74e20a0a143d3b09ef42527323eb69e6`。
+  L1 当前 agent 的 imageID 与此一致；FS 运行进程 SHA256 是
+  `3f3a1da283161572b7fd8bb0d4d372893c973855212e9ebbef1cec0feea73dde`。
+- revision 30 首次升级完整镜像时，旧 agent 被滚动替换，其子进程 FS
+  随之退出。旧 L2 Pod 一度仍为 Running，但 FUSE 返回
+  `Transport endpoint is not connected`，不能算无中断升级通过。
+  `deploy/scripts/sysrunc-inner-k3s.sh` 随后把 FS、三个 worker 和
+  snapshotter 在 exec 前移入 L1 的独立 `/sysrunc-daemons` cgroup；第一次
+  实现因 Dash 后台函数的 `$$` 指向父 shell 而失败，改为 exec 新 shell。
+- revision 32 验证 daemon 能在独立 cgroup 中启动。revision 33、34
+  通过变更镜像标签触发真实 DaemonSet 滚动更新；FS PID 5993、
+  snapshotter PID 6090 保持不变，两个进程均位于
+  `0::/sysrunc-daemons`。L2 FS Pod UID
+  `917e63ab-a028-4a3e-8e5c-e5d0b4ddaf13` 和 restartCount 0
+  未变化；CKM K3s restartCount 保持 14。当前 L1 Helm revision 34
+  的 secret 状态为 `deployed`，agent Pod `sysrunc-inner-agent-q7dpv`
+  为 1/1 Ready，imageID 与上述完整镜像一致。
+- 本次复查三个具名 L2 Pod 的 `check-status.sh` 均通过：L0 CKM Server
+  使用 `sysrunc`、`hostUsers:false`；L2 sandbox 为
+  `sysrunc/SANDBOX_READY` 且 `hostUsers` 未设置。三个 nginx Pod IP
+  `10.52.0.23`、`10.52.0.22`、`10.52.0.24` 的 HTTP 请求成功；
+  两个 PVC 分别保留 `sysrunc-webroot-1124`、`sysrunc-data-1124`，
+  旧 rootfs 注解 Pod 的 `/var/lib/k0s` 标记仍为
+  `sysrunc-k0s-1124`。三个测试 PVC 均为 Bound。
+- Chart 的三个旧 `sysbox-*` 模板文件名已改为 `sysrunc-*`；
+  `make chart` 的 lint、host 和 nested 渲染均通过。当前完整镜像是
+  **本地集成镜像**，未发布。K3s Server 自身重启仍会结束该 PID
+  namespace 内的 daemon，并使旧具名 L2 Pod 变 Unknown；发生时只重建
+  测试 Pod，保留 PVC。完整 k0s 服务启动、节点回滚、发布制品、
+  `getdents64` 安全直连及其余 proc worker 迁移仍未验收。
+
+## 2026-11-24 meminfo worker 源码检查
+
+- `/proc/meminfo` 的容器 cgroup 计算已接入每容器 proc worker，缺失
+  tracee PID 时拒绝读取；worker 请求失败时仍回退原 handler。
+  `cd fs && go test ./...`、worker/seccomp race 测试和根目录
+  `make build` 通过。本地新 FS SHA256 为
+  `17d621459b2209204a465d690538180879c0217266bf2a2c735ff1e51945b1f9`。
+- 完整镜像 `sysrunc-it:218-20261124-meminfo-worker` 已构建并直接导入隔离
+  L1 containerd，本地及 L1 agent imageID 均为
+  `sha256:7af2ca98c49279519fb63eb35ee19e6254d3fec0a119818ac6203916c5e5474f`。
+  Helm revision 35 部署后因二进制变更重启 L1 K3s，CKM K3s
+  restartCount 从 14 变为 15，旧具名 L2 Pod 变 Unknown。仅重建三个
+  具名测试 Pod，未删除 PVC；三 Pod 均重新 Ready。
+- 新 FS PID 6093 的 SHA256 为
+  `17d621459b2209204a465d690538180879c0217266bf2a2c735ff1e51945b1f9`；
+  FS 与 snapshotter PID 19347 均位于 `0::/sysrunc-daemons`。
+  七文件探针通过：`/proc/meminfo` 是只读 memfd，`statx` 返回虚拟
+  size/mode，带 `O_NONBLOCK` 的打开回退 FUSE；worker 与 FUSE 的
+  `MemTotal` 相等。目录/UUID 防逃逸探针也通过。
+- 三个 `check-status.sh` 均通过，L0 CKM 为 `sysrunc` 且
+  `hostUsers:false`，L2 sandbox 为 `sysrunc/SANDBOX_READY` 且不设置
+  `hostUsers`。三个 Pod HTTP 请求成功，webroot、`/srv/data`、
+  `/var/lib/k0s` 标记仍分别为 `sysrunc-webroot-1124`、
+  `sysrunc-data-1124`、`sysrunc-k0s-1124`；三个测试 PVC 均 Bound。
+- 同镜像和 Chart 再次升级至 Helm revision 36 后状态 `deployed`，
+  CKM Pod UID、K3s restartCount 15、FS PID 6093、snapshotter
+  PID 19347、L2 FS Pod UID
+  `65f594bb-fc73-4e3a-a260-bd7e1d8fdf91` 和 restartCount 0
+  均未变化；七文件探针和 FS HTTP 再次通过。卸载 cgroup 清理代码只做
+  shell 语法检查，尚未在仍有 L2 工作负载的现场执行卸载。
+- 该镜像仍是本地集成镜像，未发布。`getdents64` 安全直连、剩余 proc
+  与 ticker/FUSE worker 职责、完整 k0s 服务启动、节点回滚和发布
+  制品验收仍未完成。本地 Docker 已删除六个旧测试镜像标签和三个
+  未启动、无挂载的临时构建容器；保留当前完整镜像与上一稳定的
+  `cgroup-v2` 回退镜像。
+
+## 2026-11-24 uptime worker 源码与 L2 复验
+
+- `/proc/uptime` 的容器创建时间随注册消息传入每容器 proc worker；worker
+  用 tracee PID 的 cgroup 计算完整快照，PID 或创建时间缺失时拒绝读取，
+  失败时由 seccomp 路径回退原 FUSE handler。FS 全量 Go 测试、
+  worker/handler/seccomp race 测试和 `make build` 通过。
+- 完整镜像 `sysrunc-it:218-20261124-uptime-worker` 的本地 ID 与 L1
+  agent imageID 均为
+  `sha256:82af377428dc3af31c7b6155cc56a2f3e726cf1cf86a7e34f436744bddd6a782`。
+  FS 二进制 SHA256 为
+  `85a6403e427580982759ba00af9b00185ab0d103f05e8fb7567296cfa2d1f530`，
+  与 L1 FS PID 6337 的 `/proc/6337/exe` 一致。
+- Helm revision 37 部署后，二进制变化使 CKM K3s restartCount 从 15
+  变为 16；旧三个具名 L2 Pod 变 Unknown。仅用原始清单重建这三个
+  Pod，PVC 未删除，均重新 Ready。FS PID 6337 与 snapshotter PID
+  19821 均位于独立 `0::/sysrunc-daemons`。
+- FS Pod 的七文件探针通过：uptime 快路径为只读 memfd，虚拟 `statx`
+  size/mode 正确，带 `O_NONBLOCK` 的打开回退 FUSE；worker 与 FUSE
+  uptime 第一列在时间容差内。`/proc/meminfo` 的 `MemTotal` 对照、
+  UUID/目录防逃逸探针也通过。三个 `check-status.sh` 均通过，L0
+  CKM 使用 `sysrunc` 且 `hostUsers:false`；三个 L2 sandbox 为
+  `sysrunc/SANDBOX_READY` 且未设置 `hostUsers`。三个 HTTP 请求
+  成功，webroot、`/srv/data`、`/var/lib/k0s` 标记保留，三个测试
+  PVC 均 Bound。
+- 相同镜像/Chart 再次升级到 Helm revision 38，状态 `deployed`。
+  CKM Pod UID、K3s restartCount 16、FS PID 6337、snapshotter
+  PID 19821、L2 FS Pod UID
+  `723243dc-252c-4eb0-ace2-e8d4b3f6ed4b` 和 restartCount 0
+  均未变化；七文件探针再次通过。镜像仍仅在隔离 L1 使用，未发布。
+  本地 Docker 现保留当前 `uptime-worker` 与上一个通过验收的
+  `meminfo-worker` 镜像；旧 `cgroup-v2` 本地标签已清理，L1
+  containerd 中仍有该回退镜像。
+
+## 2026-11-24 ticker worker 采样与滚动升级复验
+
+- ticker worker 不再只做进程存活检查。对
+  `sysrunc.io/ticker=true` 的容器，它按 cgroup 与 PID namespace
+  启动 loadavg 采样器，FUSE 与 seccomp 读取均优先请求该 worker；
+  未启用 ticker 的容器仍用原 handler。注销容器时清理对应采样器。
+  FS 全量 Go 测试、worker/handler/seccomp race 测试、`make build`
+  和完整 Dockerfile 构建通过。
+- 本地完整镜像 `sysrunc-it:218-20261124-ticker-worker` 与 L1 agent
+  imageID 均为
+  `sha256:d526ee05e5918eb3fdd5dd1ff2f1e04873c08c892d232bd1f6ae6ab2a9553ddb`；
+  FS 二进制 SHA256 为
+  `0dea931c892102c51111618c7f4ff2f99d03098362b2b7bc4b3f276bfc71fc85`，
+  与 L1 运行进程 PID 6276 一致。
+- Helm revision 39 更新二进制，CKM K3s restartCount 从 16 变为
+  17；旧三个具名 L2 Pod 变 Unknown。仅用保存的原清单重建这三个
+  Pod，保留三个测试 PVC。普通、FS、两 PVC nginx 三 Pod 与新
+  `sysrunc-l2-ticker-1124` Pod 均 Ready；四个 sandbox 均为
+  `sysrunc/SANDBOX_READY`，L0 CKM 用 `sysrunc` 且
+  `hostUsers:false`，L2 均未设置 `hostUsers`。四个 HTTP 请求
+  成功，webroot、`/srv/data`、`/var/lib/k0s` 标记仍保留。
+- ticker Pod 带 `sysrunc.io/fs=true`、`sysrunc.io/ticker=true`。
+  它的 `/proc/loadavg` 可读；持续约 15 秒 CPU 负载后，1/5/15
+  分钟值从 `0.00 0.00 0.00` 变为 `0.13 0.04 0.01`。
+  ticker worker PID 6292 持有两个 `anon_inode:[pidfd]`。
+  删除该无 PVC 测试 Pod 后，worker pidfd 清空；重建并读取后
+  pidfd 恢复，证明注册和注销清理路径实际执行。新 Pod UID 为
+  `5c67dbd7-e908-4933-b85f-15bd2cc2f4ec`。
+- 未启用 ticker 的原 FS Pod 继续通过七文件和目录/UUID 防逃逸
+  探针；ticker Pod 的七文件探针也通过，`/proc/loadavg` 快路径为
+  只读 memfd，带 `O_NONBLOCK` 打开回退 FUSE。
+- 相同镜像重复升级到 revision 40，以及用同一 imageID 的别名
+  触发真实 DaemonSet 滚动升级到 revision 41 后，CKM K3s
+  restartCount 17、FS PID 6276、snapshotter PID 19678、
+  ticker 采样 pidfd、FS Pod UID
+  `36c8b19e-a867-458c-8dfd-169c7395a932` 和 ticker Pod UID
+  均未变化；loadavg 读取与七文件探针继续通过。revision 42 将镜像
+  标签恢复为 `ticker-worker`，agent Pod 再次滚动，以上状态保持；
+  L1 中无引用的 rollout 别名已清理。当前 revision 42 为 `deployed`。
+  本地 Docker 仅保留当前 `ticker-worker` 和上一稳定的
+  `uptime-worker` 测试镜像。
+- 镜像仍为本地集成制品，尚未发布。`/proc/stat`、其余 FUSE
+  业务、`getdents64` 安全直连、完整 k0s 服务启动、节点回滚和
+  发布制品验收仍未完成。
+
+## 2026-11-24 stat worker 与 L2 复验
+
+- `/proc/stat` 的容器视角计算迁入每容器 proc worker。FS 全量 Go 测试、
+  worker/handler/seccomp race 测试和根目录 `make build` 通过。完整本地镜像
+  `sysrunc-it:218-20261124-stat-worker` 的 ID 与 L1 agent imageID 均为
+  `sha256:02944e3d4706226d40ff0bcb435fa1032d80d52bb4e245a660819379324d1a39`；
+  FS 二进制 SHA256 为
+  `a4380deab4c9c74bac52dcd230a9b9e55f707554259589b13b1bfbe0b22124b3`，
+  与运行中 FS PID 6455 的 `/proc/6455/exe` 一致。
+- L1 Helm revision 43 部署后，CKM K3s restartCount 为 18。只重建四个
+  具名 L2 测试 Pod，保留三个测试 PVC。普通、FS、两 PVC 和 ticker Pod
+  均为 1/1 Ready；四个 `check-status.sh` 均通过，L0 CKM Server Pod
+  UID `b29276c3-3494-4ad6-b7dc-ba62bd5f5ecd` 使用 `sysrunc` 且
+  `hostUsers:false`，四个 L2 Pod 均不设置 `hostUsers`，CRI sandbox 为
+  `sysrunc/SANDBOX_READY`。
+- 更新后的 `proc-files-probe.c` 在 FS Pod 通过：七个文件均为只读 memfd，
+  `statx` 给出虚拟 size/mode，`O_NONBLOCK` 回退 FUSE；`/proc/stat`
+  worker 与 FUSE 视图均有 8 条 CPU 行，worker CPU 计数在相隔一秒的
+  两次读取之间不下降。目录/UUID 防逃逸探针也通过，父目录相对
+  `../hostname` 仍由 FUSE 处理。
+- 四个 L2 nginx HTTP 请求均返回 200。webroot 和 `/srv/data` 标记为
+  `sysrunc-webroot-1124`、`sysrunc-data-1124`，`index.html` 与
+  `50x.html` 非空；独立旧 rootfs 测试 Pod 的 `/var/lib/k0s/marker-1124`
+  仍为 `sysrunc-k0s-1124`。三个相关测试 PVC 均 Bound。ticker Pod 的
+  `/proc/loadavg` 可读。
+- 用相同 Chart 和镜像重复升级至 L1 Helm revision 44，状态为
+  `deployed`。CKM Pod UID 和 K3s restartCount 18、agent Pod UID
+  `7903fd6d-b992-4a5d-a5c9-ff99308c6227` 与 restartCount 1、
+  FS PID 6455、snapshotter PID 19849、FS Pod UID
+  `ca40513a-3982-4d7f-bd91-83ec48a52e78`、ticker Pod UID
+  `415183fe-4c8a-4abf-b775-d0847162d68d` 均未变化；两个 L2 Pod
+  restartCount 仍为 0。七文件及 `/proc/stat` 探针再次通过。
+- 该镜像仅在隔离 L1 的 containerd 中使用，尚未发布。其余 FUSE 业务、
+  `getdents64` 安全直连、完整 k0s 服务启动、节点回滚和发布制品
+  验收仍未完成。
+
+## 2026-11-24 FS 协议文件改名与完整镜像复验
+
+- TAPD 子项目命名检查发现 FS protobuf 源与生成文件仍以 `sysbox` 命名。
+  两文件改为 `sysruncFsProtobuf`，Makefile、测试和注释同步更新；
+  gRPC wire service `protobuf.sysboxStateChannel` 保留以兼容已有 socket
+  客户端。`cd ipc && go test ./...`、根目录 `make build` 和完整
+  `deploy/Dockerfile.sysrunc-k3s` 构建通过。
+- 新完整本地镜像 `sysrunc-it:218-20261124-protocol-rename` ID 为
+  `sha256:3e3fb7670fa55ff90161bf972253f60cc26b94251eaffeaddd9ce23bd0629acf`。
+  runtime、FS、snapshotter 的构建 SHA256 分别为
+  `605b2e7a4b2a499ed168d45d895b3ea70872fe14d3ee2e686e8fe49c54d72e63`、
+  `246907c5dc4fd67b7d567ce0bd565dfa2df2e0b46c43444339e5e1da61662bc9`、
+  `71c4789687f4c2d8c7f5967294f802dfd54e9b42f58ba4862c3836588dcb4fc0`。
+  L1 agent imageID 与镜像 ID 一致，运行中 FS PID 6332 的 exe 哈希
+  与构建 FS 一致。
+- 首轮 Helm upgrade 因二进制更新触发 CKM K3s restartCount 18→19；
+  L0 Pod port-forward 随 K3s API 断开，revision 45 留在
+  `pending-upgrade`。此时新 agent 已 Ready 且运行新镜像。恢复转发后
+  对相同 revision 45 manifest 执行 Helm rollback，revision 46 为
+  `deployed`；仅重建四个具名 L2 测试 Pod，未删除 PVC。
+- 四个 `check-status.sh` 均通过：L0 CKM Server UID
+  `b29276c3-3494-4ad6-b7dc-ba62bd5f5ecd` 使用 `sysrunc`、
+  `hostUsers:false`，L2 均未设置 `hostUsers`，sandbox 均为
+  `sysrunc/SANDBOX_READY`。普通、FS、两 PVC、ticker Pod 的 UID 分别为
+  `8c80d928-3425-4670-8291-9a19db55c095`、
+  `9c13ae9d-1c99-41e0-b0f0-d9cef965c364`、
+  `1812d035-3ef9-444f-965e-6386dc017e0e`、
+  `d3cf55b0-6055-448c-b10a-72f74585f17e`，均为 1/1 Ready。
+  四个 HTTP 均为 200；webroot、`/srv/data`、`/var/lib/k0s`
+  标记及三个 Bound PVC 仍在。
+- FS Pod 的七文件探针和目录/UUID 防逃逸探针均通过，包括
+  `/proc/stat` 八 CPU、只读 memfd、FUSE 回退和计数单调断言。
+  相同镜像/Chart 再升至 revision 47 后，CKM K3s restartCount 19、
+  agent UID `7dafa147-f1f4-40c0-a47d-045a7b6f9f1c` 与 restartCount 1、
+  FS PID 6332、snapshotter PID 19676、FS 与 ticker Pod UID 及
+  restartCount 0 均未变化；探针再次通过。
+- 镜像仍只在隔离 L1 使用，未发布。`getdents64` 安全直连、其余
+  FUSE 业务迁移、完整 k0s 启动、节点回滚和发布制品验收仍待完成。
+  本地 Docker 已清理无容器引用的旧 `ticker-worker` 与
+  `ko.local:sysrunc-it-20261124-reconcile-fs` 标签；L1 containerd 也
+  清理了旧 `ticker-worker` 标签。保留当前镜像和上一稳定
+  `stat-worker` 镜像作为回退。
+
+## 2026-11-24 新旧 FS gRPC 服务并存与 L2 复验
+
+- protobuf 增加主服务 `protobuf.sysruncStateChannel`，FS 同时注册旧
+  `protobuf.sysboxStateChannel`；runtime 客户端优先调用新服务，仅当旧
+  FS 返回 unknown service 时回退。IPC 单测覆盖新服务、旧服务回退与
+  方法自身 `Unimplemented` 不重复执行，`cd ipc && go test ./...` 和
+  根目录 `make build` 通过。
+- 完整本地镜像 `sysrunc-it:218-20261124-protocol-service` ID 为
+  `sha256:3d47612498f96a98a9a1037ba701188919520b79e01ac24686f150a04db6255b`。
+  runtime、FS、snapshotter SHA256 分别为
+  `5575d709b405ae2b6ccee76665aace1e0241bbe1a189453966f9366e7a10176b`、
+  `1b7ee5dce4c429a6630e28f687c278081b5c1fe89b33366966aa7a5d951cc0d4`、
+  `71c4789687f4c2d8c7f5967294f802dfd54e9b42f58ba4862c3836588dcb4fc0`。
+  L1 agent imageID 与镜像 ID 一致；运行中 FS PID 6203 exe 哈希与构建
+  FS 一致。
+- 新镜像导入隔离 L1 后，用放在 CKM Server 容器内的 Helm 和校验过
+  SHA256 的 Chart 包执行升级。revision 48 直接为 `deployed`，避免
+  port-forward 在 K3s 重启时中断 Helm 客户端。CKM K3s restartCount
+  从 19 增至 20，新 agent Ready。仅重建四个具名 L2 测试 Pod，PVC
+  未删除。实际 L1 FS socket 上直接调用新旧两个 gRPC 服务，均返回
+  `/var/lib/sysruncfs-inner`。
+- 四个 `check-status.sh` 均通过：L0 CKM Server Pod UID
+  `b29276c3-3494-4ad6-b7dc-ba62bd5f5ecd` 仍使用 `sysrunc`、
+  `hostUsers:false`；普通、FS、双 PVC、ticker Pod UID 分别为
+  `306c572c-5734-4c47-86dc-b45bb19ed7cc`、
+  `e4ebcc72-847b-4637-90c2-bb20260d1ce7`、
+  `a8f9a269-d1a0-4d7b-a87b-de86dc9b2e70`、
+  `57f782a8-3a03-4c63-9e83-c423ea6879ce`，均为 1/1 Ready，
+  `hostUsers` 未设置且 CRI sandbox 为 `sysrunc/SANDBOX_READY`。
+  四个 HTTP 均为 200；webroot、`/srv/data`、`/var/lib/k0s` 标记
+  与三个 Bound PVC 仍在。FS 七文件和目录/UUID 防逃逸探针通过。
+- 同镜像/Chart 升级至 revision 49 后状态 `deployed`；K3s
+  restartCount 20、agent UID `7ecc4fc0-8dc4-4b04-bfdc-1b96c2dd55b9`
+  与 restartCount 1、FS PID 6203、snapshotter PID 19532、FS 与
+  ticker Pod UID 及 restartCount 0 均未变化；七文件探针再次通过。
+  镜像仍未发布，`getdents64` 安全直连、其余 FUSE 业务、完整 k0s
+  启动、节点回滚和发布制品验收仍待完成。
+  本地 Docker 与 L1 containerd 已清理无引用的旧 `stat-worker` 镜像
+  标签；保留当前 `protocol-service` 与上一稳定 `protocol-rename`
+  镜像作回退。验收临时 Helm、Chart 包和 gRPC 探针已删除。
+
+## 2026-11-25 getdents64 seccomp notify 直连与隔离 CKM 复验
+
+- `/proc/sys/kernel/random` 的 `getdents64` 仅在原 FUSE 目录 FD、未被
+  mask、有效 byte-offset cookie 和可安全写回 tracee 时由 seccomp notify
+  直接返回。它通过 `pidfd_getfd` 共享原 FD 游标，不注入宿主目录 FD；
+  非匹配目录和异常情况继续走内核/FUSE。`cd fs && go test ./...`、
+  `go test -race ./seccomp ./worker ./handler/implementations`、
+  `cd runc && go test ./libcontainer/sysruncfs` 和根目录 `make build` 通过。
+- 完整本地镜像 `sysrunc-it:218-20261125-getdents-safe`，ID
+  `sha256:904e60623cad37fbaf25968c20623483ee0b3d3ee48f637bab61f00ca6edf20d`
+  在隔离 L1 Helm revision 50 `deployed`。四个具名 L2 Pod 重建后 Ready，
+  `check-status.sh` 均通过，FS 目录探针返回 224 字节，分段读取、dup
+  共享游标、rewind 和 `../hostname` 防逃逸通过。当时尚无独立命中日志。
+- 为取得直接证据，FS 成功分支增加每进程一次的 info 日志。完整本地镜像
+  `sysrunc-it:218-20261125-getdents-observe` ID 为
+  `sha256:643f6cbaf9c148641660dc26ce621fcd34ca5210dbc07289993966770a875456`。
+  runtime、FS、snapshotter SHA256 分别为
+  `81ed9f59aba738f5e8ffa528c76397e1040bc20ecda9ff9c81fa4549006b3a92`、
+  `0c2cc4a42218c5754f8de0c442c52f8c97f6f19e05a46ca0e5fdcaf5b1f2cc92`、
+  `71c4789687f4c2d8c7f5967294f802dfd54e9b42f58ba4862c3836588dcb4fc0`。
+  镜像压缩包校验后仅导入隔离 L1 containerd；Helm revision 51
+  `deployed`，K3s restartCount 22。运行中 FS PID 6179 的 exe 哈希
+  与上述 FS 哈希一致。FS Pod 直接 syscall 探针返回
+  `getdents64 bytes=224`，`/var/log/sysrunc-fs.log` 同时出现
+  `getdents64 fast path served /proc/sys/kernel/random through seccomp notify`。
+  这是该路径实际命中直连分支的现场证据。
+- 一次暂停 FUSE **repair** worker 的实验中，目标和 `/proc/sys` 对照目录
+  均可读取；普通 FUSE 请求仍由 FS 主进程处理，因此该实验不能用作直连
+  证据。worker 已恢复，误导性的临时探针源码已删除。
+- revision 51 的四个 `check-status.sh` 均通过，L0 CKM Server 仍为
+  `sysrunc`、`hostUsers:false`；L2 均未设置 `hostUsers`，CRI sandbox 均为
+  `sysrunc/SANDBOX_READY`。FS 七文件与目录/UUID 探针通过，四个 nginx
+  HTTP 均返回欢迎页。webroot、`/srv/data`、`/var/lib/k0s` 标记分别为
+  `sysrunc-webroot-1124`、`sysrunc-data-1124`、`sysrunc-k0s-1124`；
+  三个 PVC 均 Bound，未删除。FS Pod UID
+  `cdb0de4f-acb8-4279-b7bd-766b8bc5bc97`，ticker Pod UID
+  `6664f24a-d918-44d7-a19e-e1393f980f7d`。
+- 相同镜像和 Chart 再升至 revision 52 `deployed`：L0 CKM Server UID
+  `b29276c3-3494-4ad6-b7dc-ba62bd5f5ecd`、K3s restartCount 22、
+  FS PID 6179、snapshotter PID 19792、agent UID
+  `b85335fd-945d-4bec-b56f-a038941e2e4b`、FS 与 ticker Pod UID 及
+  restartCount 0 均未变化；目录探针复跑通过。镜像仍未发布；其余 FUSE
+  业务迁移、完整 k0s 服务启动、节点回滚和发布制品验收仍未完成。
+- 清理了 L1 containerd 中未被现有 Pod 引用的 23 个旧 `sysrunc-it`
+  测试镜像标签，以及本地 Docker 的两个旧 protocol 镜像标签；保留当前
+  `getdents-observe`、上一稳定 `getdents-safe` 和 admission 使用的
+  `218-20261123g`。导入用压缩包及误导性实验探针已删除。清理后 L0
+  CKM restartCount 仍为 22，四个 L2 Pod 均 1/1 Ready。

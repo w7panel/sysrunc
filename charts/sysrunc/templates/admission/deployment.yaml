@@ -1,0 +1,88 @@
+{{- if .Values.admission.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sysrunc.admissionName" . }}
+  namespace: {{ include "sysrunc.namespace" . }}
+  labels:
+    {{- include "sysrunc.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sysrunc-admission
+spec:
+  replicas: {{ .Values.admission.replicas }}
+  selector:
+    matchLabels:
+      {{- include "sysrunc.admissionSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.admission.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "sysrunc.admissionSelectorLabels" . | nindent 8 }}
+        helm.sh/chart: {{ include "sysrunc.chart" . }}
+        {{- if .Chart.AppVersion }}
+        app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+        {{- end }}
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+        app.kubernetes.io/component: sysrunc-admission
+        {{- with .Values.admission.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "sysrunc.serviceAccountName" . }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: sysrunc-admission
+          image: {{ printf "%s:%s" (.Values.admission.image.repository | default .Values.installer.image.repository) (.Values.admission.image.tag | default .Values.installer.image.tag | default (printf "v%s" .Chart.AppVersion)) | quote }}
+          imagePullPolicy: {{ .Values.admission.image.pullPolicy | default .Values.installer.image.pullPolicy }}
+          command:
+            - "/usr/local/bin/sysrunc-admission"
+          args:
+            - -addr=:9443
+            - -bootstrap-webhook=true
+            - -namespace={{ include "sysrunc.namespace" . }}
+            - -service-name={{ include "sysrunc.admissionServiceName" . }}
+            - -service-port=443
+            - -webhook-name={{ include "sysrunc.admissionWebhookName" . }}
+            - -ca-secret-name={{ include "sysrunc.admissionCASecretName" . }}
+            - -tls-secret-name={{ include "sysrunc.admissionTLSSecretName" . }}
+            - -lease-name={{ include "sysrunc.admissionLeaseName" . }}
+            - -containerd-config-dir=/host/containerd
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: https
+              containerPort: 9443
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+          volumeMounts:
+            - name: containerd-config
+              mountPath: /host/containerd
+              readOnly: true
+      volumes:
+        - name: containerd-config
+          hostPath:
+            path: {{ .Values.admission.containerdConfigPath | quote }}
+            type: Directory
+{{- end }}

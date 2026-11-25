@@ -1,0 +1,20 @@
+{{- if .Values.admission.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sysrunc.admissionServiceName" . }}
+  namespace: {{ include "sysrunc.namespace" . }}
+  labels:
+    {{- include "sysrunc.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sysrunc-admission
+spec:
+  type: ClusterIP
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+      protocol: TCP
+  selector:
+    {{- include "sysrunc.admissionSelectorLabels" . | nindent 4 }}
+{{- end }}

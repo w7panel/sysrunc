@@ -1,0 +1,197 @@
+{{- $nested := eq (include "sysrunc.installMode" .) "nested" }}
+{{- if or .Values.installer.enabled $nested }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ if $nested }}{{ include "sysrunc.fullname" . }}-inner-agent{{ else }}{{ include "sysrunc.daemonSetName" . }}{{ end }}
+  namespace: {{ include "sysrunc.namespace" . }}
+  labels:
+    {{- include "sysrunc.labels" . | nindent 4 }}
+    {{- if $nested }}
+    app.kubernetes.io/component: inner-agent
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "sysrunc.selectorLabels" . | nindent 6 }}
+      {{- if $nested }}
+      app.kubernetes.io/component: inner-agent
+      {{- end }}
+  template:
+    metadata:
+      {{- with .Values.installer.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- if $nested }}
+        {{- include "sysrunc.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: inner-agent
+        {{- else }}
+        {{- include "sysrunc.labels" . | nindent 8 }}
+        {{- with .Values.installer.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $nested }}
+      enableServiceLinks: false
+      # The daemons run in an independent node cgroup, so rolling the agent
+      # image does not disconnect existing FUSE mounts.
+      terminationGracePeriodSeconds: 10
+      tolerations:
+        - operator: Exists
+      {{- end }}
+      hostPID: true
+      serviceAccountName: {{ include "sysrunc.serviceAccountName" . }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: {{ if $nested }}inner-agent{{ else }}{{ include "sysrunc.name" . }}{{ end }}
+        image: {{ printf "%s:%s" .Values.installer.image.repository (.Values.installer.image.tag | default (printf "v%s" .Chart.AppVersion)) | quote }}
+        imagePullPolicy: {{ .Values.installer.image.pullPolicy }}
+        command: ["/opt/sysrunc/scripts/sysrunc-installer.sh", "install"]
+        env:
+        - name: SYSRUNC_INSTALL_MODE
+          value: {{ if $nested }}nested{{ else }}host{{ end }}
+        {{- if not $nested }}
+        - name: SYSRUNC_SNAPSHOTTER_ENABLED
+          value: {{ .Values.snapshotter.enabled | quote }}
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: DBUS_SYSTEM_BUS_ADDRESS
+          value: unix:path=/run/dbus/system_bus_socket
+        {{- end }}
+        securityContext:
+          privileged: true
+        {{- if $nested }}
+        readinessProbe:
+          exec:
+            command: ["/opt/sysrunc/scripts/sysrunc-installer.sh", "status"]
+          periodSeconds: 5
+          timeoutSeconds: 10
+          failureThreshold: 6
+        {{- end }}
+        volumeMounts:
+        {{- if $nested }}
+        - name: host-k3s-data
+          mountPath: /host/var/lib/rancher/k3s
+        - name: dev-fuse
+          mountPath: /dev/fuse
+        {{- else }}
+        - name: host-etc
+          mountPath: /mnt/host/etc
+        - name: host-osrelease
+          mountPath: /mnt/host/os-release
+        - name: host-dbus
+          mountPath: /var/run/dbus
+        - name: host-dbus
+          mountPath: /run/dbus
+        - name: host-run-systemd
+          mountPath: /run/systemd
+        - name: host-lib-systemd
+          mountPath: /mnt/host/lib/systemd/system
+        - name: host-etc-systemd
+          mountPath: /mnt/host/etc/systemd/system
+        - name: host-lib-sysctl
+          mountPath: /mnt/host/lib/sysctl.d
+        - name: host-opt-lib-sysctl
+          mountPath: /mnt/host/opt/lib/sysctl.d
+        - name: host-usr-bin
+          mountPath: /mnt/host/usr/bin
+        - name: host-bin
+          mountPath: /mnt/host/bin
+        - name: host-opt-bin
+          mountPath: /mnt/host/opt/bin
+        - name: host-usr-local-bin
+          mountPath: /mnt/host/usr/local/bin
+        - name: host-opt-local-bin
+          mountPath: /mnt/host/opt/local/bin
+        - name: host-usr-lib-mod-load
+          mountPath: /mnt/host/usr/lib/modules-load.d
+        - name: host-opt-lib-mod-load
+          mountPath: /mnt/host/opt/lib/modules-load.d
+        - name: host-run
+          mountPath: /mnt/host/run
+        - name: host-var-lib
+          mountPath: /mnt/host/var/lib
+        {{- end }}
+      volumes:
+        {{- if $nested }}
+        - name: host-k3s-data
+          hostPath:
+            path: /var/lib/rancher/k3s
+            type: Directory
+        - name: dev-fuse
+          hostPath:
+            path: /dev/fuse
+            type: CharDevice
+        {{- else }}
+        - name: host-etc
+          hostPath:
+            path: /etc
+        - name: host-osrelease
+          hostPath:
+            path: /etc/os-release
+        - name: host-dbus
+          hostPath:
+            path: /var/run/dbus
+        - name: host-run-systemd
+          hostPath:
+            path: /run/systemd
+        - name: host-lib-systemd
+          hostPath:
+            path: /lib/systemd/system
+        - name: host-etc-systemd
+          hostPath:
+            path: /etc/systemd/system
+        - name: host-lib-sysctl
+          hostPath:
+            path: /lib/sysctl.d
+        - name: host-opt-lib-sysctl
+          hostPath:
+            path: /opt/lib/sysctl.d
+        - name: host-usr-bin
+          hostPath:
+            path: /usr/bin/
+        - name: host-bin
+          hostPath:
+            path: /bin/
+        - name: host-opt-bin
+          hostPath:
+            path: /opt/bin/
+        - name: host-usr-local-bin
+          hostPath:
+            path: /usr/local/bin/
+        - name: host-opt-local-bin
+          hostPath:
+            path: /opt/local/bin/
+        - name: host-usr-lib-mod-load
+          hostPath:
+            path: /usr/lib/modules-load.d
+        - name: host-opt-lib-mod-load
+          hostPath:
+            path: /opt/lib/modules-load.d
+        - name: host-run
+          hostPath:
+            path: /run
+        - name: host-var-lib
+          hostPath:
+            path: /var/lib
+        {{- end }}
+  {{- if not $nested }}
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 1
+    type: RollingUpdate
+  {{- end }}
+{{- end }}

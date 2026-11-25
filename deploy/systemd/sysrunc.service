@@ -1,0 +1,20 @@
+# Sysrunc unit to act as a wrapper of sysrunc's inner components/daemons:
+# sysrunc-fs and sysrunc-snapshotter.
+
+[Unit]
+Description=Sysrunc container runtime
+Documentation=https://github.com/w7panel/sysrunc
+BindsTo=sysrunc-fs.service
+After=sysrunc-fs.service sysrunc-snapshotter.service
+
+# Must start before Docker/containerd to ensure "docker --restart" works
+# properly with Sysrunc.
+Before=docker.service containerd.service
+
+[Service]
+Type=exec
+ExecStart=/bin/sleep infinity
+
+[Install]
+# Components of this application should be started at boot time
+WantedBy=multi-user.target

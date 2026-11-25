@@ -1,0 +1,114 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "sysrunc.serviceAccountName" . }}
+  namespace: {{ include "sysrunc.namespace" . }}
+  labels:
+    {{- include "sysrunc.labels" . | nindent 4 }}
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ include "sysrunc.clusterRoleName" . }}
+  labels:
+    {{- include "sysrunc.labels" . | nindent 4 }}
+rules:
+{{- if eq (include "sysrunc.installMode" .) "host" }}
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "patch"]
+{{- end }}
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "delete"]
+{{- if eq (include "sysrunc.installMode" .) "host" }}
+- apiGroups: [""]
+  resources: ["replicationcontrollers"]
+  verbs: ["get"]
+- apiGroups: ["apps"]
+  resources: ["replicasets", "statefulsets"]
+  verbs: ["get"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get"]
+{{- end }}
+{{- if .Values.admission.enabled }}
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources: ["mutatingwebhookconfigurations"]
+  verbs: ["get", "create", "update"]
+{{- end }}
+{{- if .Values.admission.enabled }}
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ include "sysrunc.clusterRoleName" . }}
+  namespace: {{ include "sysrunc.namespace" . }}
+  labels:
+    {{- include "sysrunc.labels" . | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "create", "update"]
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "create", "update"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ include "sysrunc.clusterRoleBindingName" . }}
+  namespace: {{ include "sysrunc.namespace" . }}
+  labels:
+    {{- include "sysrunc.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "sysrunc.clusterRoleName" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "sysrunc.serviceAccountName" . }}
+  namespace: {{ include "sysrunc.namespace" . }}
+{{- if eq (include "sysrunc.installMode" .) "nested" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "sysrunc.fullname" . }}-inner-uninstall
+  namespace: {{ include "sysrunc.namespace" . }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "sysrunc.fullname" . }}-inner-uninstall
+  namespace: {{ include "sysrunc.namespace" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "sysrunc.fullname" . }}-inner-uninstall
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "sysrunc.serviceAccountName" . }}
+    namespace: {{ include "sysrunc.namespace" . }}
+{{- end }}
+{{- end }}
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ include "sysrunc.clusterRoleBindingName" . }}
+  labels:
+    {{- include "sysrunc.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "sysrunc.clusterRoleName" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "sysrunc.serviceAccountName" . }}
+  namespace: {{ include "sysrunc.namespace" . }}

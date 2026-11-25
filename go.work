@@ -1,0 +1,68 @@
+go 1.25.0
+
+use (
+	./admission
+	./fs
+	./ipc
+	./libs/capability
+	./libs/containerdUtils
+	./libs/dockerUtils
+	./libs/fileMonitor
+	./libs/formatter
+	./libs/idMap
+	./libs/idShiftUtils
+	./libs/linuxUtils
+	./libs/mount
+	./libs/overlayUtils
+	./libs/pidfd
+	./libs/pidmonitor
+	./libs/shiftfs
+	./libs/utils
+	./runc
+	./snapshotter
+)
+
+replace (
+	bazil.org/fuse => ./fs/bazil
+	bazil.org/fuse v0.0.0-00010101000000-000000000000 => ./fs/bazil
+)
+
+replace github.com/w7panel/sysrunc/libs/containerdUtils v0.0.0 => ./libs/containerdUtils
+
+replace github.com/w7panel/sysrunc/ipc v0.0.0-00010101000000-000000000000 => ./ipc
+
+replace github.com/w7panel/sysrunc/libs/capability v0.0.0-00010101000000-000000000000 => ./libs/capability
+
+replace github.com/w7panel/sysrunc/libs/dockerUtils v0.0.0-00010101000000-000000000000 => ./libs/dockerUtils
+
+replace github.com/w7panel/sysrunc/libs/fileMonitor v0.0.0-00010101000000-000000000000 => ./libs/fileMonitor
+
+replace (
+	github.com/w7panel/sysrunc/libs/formatter v0.0.0-00010101000000-000000000000 => ./libs/formatter
+	github.com/w7panel/sysrunc/libs/formatter v0.0.0-20210709231355-1ea69f2f6dbb => ./libs/formatter
+	github.com/w7panel/sysrunc/libs/formatter v0.0.0-20211230192847-357e78e444bd => ./libs/formatter
+)
+
+replace github.com/w7panel/sysrunc/libs/idMap v0.0.0-00010101000000-000000000000 => ./libs/idMap
+
+replace github.com/w7panel/sysrunc/libs/idShiftUtils v0.0.0-00010101000000-000000000000 => ./libs/idShiftUtils
+
+replace github.com/w7panel/sysrunc/libs/linuxUtils v0.0.0-00010101000000-000000000000 => ./libs/linuxUtils
+
+replace (
+	github.com/w7panel/sysrunc/libs/mount v0.0.0-00010101000000-000000000000 => ./libs/mount
+	github.com/w7panel/sysrunc/libs/mount v0.0.0-20240602025437-33cbdf5a9e98 => ./libs/mount
+)
+
+replace github.com/w7panel/sysrunc/libs/overlayUtils v0.0.0-00010101000000-000000000000 => ./libs/overlayUtils
+
+replace github.com/w7panel/sysrunc/libs/pidfd v0.0.0-00010101000000-000000000000 => ./libs/pidfd
+
+replace github.com/w7panel/sysrunc/libs/shiftfs v0.0.0-00010101000000-000000000000 => ./libs/shiftfs
+
+replace github.com/w7panel/sysrunc/libs/utils v0.0.0-00010101000000-000000000000 => ./libs/utils
+
+replace (
+	github.com/w7panel/sysrunc/runc v0.0.0-00010101000000-000000000000 => ./runc
+	github.com/w7panel/sysrunc/runc v1.1.4 => ./runc
+)

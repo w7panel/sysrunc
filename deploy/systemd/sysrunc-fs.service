@@ -1,0 +1,25 @@
+[Unit]
+Description=sysrunc-fs (part of the Sysrunc container runtime)
+PartOf=sysrunc.service
+
+[Service]
+Type=simple
+Type=notify
+ExecStart=/usr/bin/sysrunc-fs --session-recovery
+TimeoutStartSec=90
+TimeoutStopSec=90
+StartLimitInterval=0
+NotifyAccess=main
+# Keep seccomp listeners alive across the complete sysrunc stop/start sequence.
+FileDescriptorStoreMax=65536
+FileDescriptorStorePreserve=yes
+OOMScoreAdjust=-500
+
+# The number of files opened by sysrunc-fs is a function of the number of
+# containers and the workloads within them. Thus we set the limit to
+# infinite so to prevent "too many open files" errors.
+LimitNOFILE=infinity
+LimitNPROC=infinity
+
+[Install]
+WantedBy=sysrunc.service

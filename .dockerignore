@@ -1,0 +1,9 @@
+.git
+.gocache
+.gomodcache
+.tmp
+bin
+fs/build
+admission/build
+snapshotter/build
+*.log

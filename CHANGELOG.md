@@ -1,0 +1,19 @@
+# Changelog
+
+## Unreleased
+
+- Prepared nested `sysfs` mounts before entering the L0 Server user namespace, so L1 native runc can mount sysfs without enabling an L0 FS listener. The previous L0 listener was inherited by L2 and made its seccomp notify setup fail with `EBUSY`.
+- Allowed FS to use the existing zero UUID fallback when nested user namespaces deny access to `product_uuid`; the L1 FS daemon previously exited before the snapshotter started.
+- Replaced pre-existing mounts at persistent special paths and made the replacements recursively shared, matching Sysbox's K3s mount behavior. Duplicate private `/var/lib/kubelet` mounts had prevented the L1 cert-manager CSI driver from starting.
+- Built the snapshotter without CGO so the L1 agent can run it in the minimal K3s rootfs.
+- Enabled a writable, delegated cgroup v2 hierarchy for rootfs-intent containers, moved their init process into `init.scope`, and seeded the nested OOM adjustment floor before restoring the Pod QoS value. The 218 L1 K3s server had failed on a read-only cgroup mount, then on `domain-invalid` cgroups; after these changes it started kubelet and attempted L1 system Pods. L1 is still blocked by nested sysfs mounts.
+- Supplied a `/dev/kmsg` to `/dev/null` shim for rootfs-enabled Sysrunc system Pods. The 218 nested K3s kubelet stopped when `/dev/kmsg` was absent; the shim gives it a character device without exposing the host kernel log.
+- Exposed `/dev/fuse` for rootfs-enabled Sysrunc Pods without a Kubernetes hostPath, built static `fuse-overlayfs` and `fusermount3` helpers, and allowed the actual FUSE source in the host AppArmor profile. The 218 L0 Pod received the device, but nested K3s still failed on `/dev/kmsg` and iptables permissions; FS mode also lacks a required virtual `/proc/sys` entry.
+- Preserved the original OCI source path while checking a bind mount through its idmapped mount fd, so a managed FS mount at `/proc/sys` passes the narrow source and filesystem validation.
+- Kept `hostUsers` unchanged for FS-enabled Pods using the new `sysrunc` RuntimeClass, because nested K3s must not require user namespaces on L2 workloads; the legacy `sysbox-runc` admission rule remains in place.
+- Added a Sysrunc-specific nested integration skill and recorded the 218 CKM PVC and persistence regression, so future checks use the new handler and avoid old Sysbox cleanup scripts.
+- Made the OCI runtime static and allowed FS registration without explicit UID/GID mappings for L1 Pods without `hostUsers:false`; removed FUSE bind propagation flags that failed during OCI setup. Added a narrow `/proc/sys` mount exception for a Sysrunc FS FUSE source; FS startup still fails when OCI writes a sysctl through the overmount.
+- Kept the L0 Sysrunc installer from replacing old Sysbox runtime files and handlers, so the new handler can be prepared alongside existing workloads.
+- Kept seccomp notify's openat2 handling within the known structure size and original path-resolution semantics; `statx` and `getdents64` retain kernel and FUSE behavior because ADDFD cannot return their buffers.
+- Created a single source tree for the Kubernetes runtime and supporting services from the Sysbox sources, so subsequent changes can be developed and built together.
+- Rewired local Go module imports to the `github.com/w7panel/sysrunc` namespace and added a Go workspace, so components resolve local code without Git submodules.

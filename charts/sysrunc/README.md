@@ -1,0 +1,119 @@
+# sysrunc Helm Chart
+
+This chart installs the Sysrunc Kubernetes resources, including the runtime
+installer and admission backend.
+
+## Values
+
+### Installation mode
+
+`installMode` defaults to `auto`; an empty value also selects automatic detection.
+The chart queries DaemonSets in `default`, following CKM's `createAgent` identity:
+an agent labeled `k3k-agent-pod=true` with `IS_CHILD=true` in its container environment
+selects `nested`. Otherwise it selects `host`. Explicit `host` or `nested` skips
+detection. The mode is resolved consistently for all chart resources.
+
+Automatic detection requires API access to get the `kube-system` namespace and
+list DaemonSets in `default`. Offline `helm template`/`helm lint` must use
+`--set installMode=host` or `--set installMode=nested`; connected previews can use
+`--dry-run=server`. A CKM without its panel agent yet must explicitly select
+`nested`. Existing releases that saved `installMode=host` must change it to
+`auto` to enable detection; `--reuse-values` retains the saved override.
+
+### RuntimeClass
+
+The chart creates the `sysrunc` RuntimeClass in host and nested modes. Its FS
+and ticker features are selected with `sysrunc.io/fs` and `sysrunc.io/ticker`;
+both default to off. Set `compatRuntimeClasses=true` only after the old chart
+has relinquished ownership of its `sysbox-runc` and `sysbox-runc-lite`
+RuntimeClasses. The nested agent installs the runtime and containerd handler
+from the installer image, then restarts K3s when the template changes.
+RuntimeClasses have no scheduling node selector.
+
+### Node Selector
+
+By default, the chart does not restrict Sysrunc resources to labeled nodes. To
+install Sysrunc only on nodes with a specific label, set the shared node selector:
+
+```yaml
+nodeSelector:
+  sysrunc-runtime: running
+```
+
+When set, the same label selector is applied to the installer DaemonSet, the
+admission Deployment, and the nested agent DaemonSet. Label the target nodes
+before using this option:
+
+```bash
+kubectl label node <node-name> sysrunc-runtime=running
+```
+
+To use a custom label, set `nodeSelector` to the desired key/value map.
+
+| Value | Default | Description |
+| --- | --- | --- |
+| `nodeSelector` | `{}` | Shared node selector for the installer DaemonSet and admission Deployment. RuntimeClasses in both modes have no node selector. |
+
+### Images
+
+The installer and admission backend use the same image by default. When the
+installer tag is empty, the chart defaults it to `v{{ .Chart.AppVersion }}`.
+
+| Value | Default | Description |
+| --- | --- | --- |
+| `installer.image.repository` | `ghcr.io/w7panel/sysrunc-deploy-k3s` | Installer image repository. |
+| `installer.image.tag` | `""` | Installer image tag; defaults to `v{{ .Chart.AppVersion }}`. |
+| `admission.image.repository` | `""` | Optional admission image repository override; defaults to `installer.image.repository`. |
+| `admission.image.tag` | `""` | Optional admission image tag override; defaults to `installer.image.tag`. |
+| `admission.image.pullPolicy` | `""` | Optional admission pull policy override; defaults to `installer.image.pullPolicy`. |
+
+Images are pulled directly from GHCR by default.
+
+### Installer
+
+In nested mode, the Chart always runs the inner agent from `installer.image`.
+The outer `sysrunc` supplies `/dev/fuse` to the CKM Server at runtime; its
+Pod does not declare a FUSE volume. The Server also needs persistent
+`/var/lib/rancher/k3s`. The agent stores release binaries there and reconciles
+them after K3s or agent restarts. Uninstall checks for active sysrunc Pods, stops
+the agent, and restores the previous containerd template. Restart the CKM
+Server after Helm uninstall completes so containerd loads that template;
+`w7panel-doc/sysrunc-in-sysrunc/07-uninstall-ckm-chart.sh` performs both steps.
+
+| Value | Default | Description |
+| --- | --- | --- |
+| `installer.podLabels` | `{}` | Extra labels for installer pods. |
+| `installer.podAnnotations` | `{}` | Extra annotations for installer pods. |
+
+### Admission
+
+The admission backend is rendered by this chart and reuses the installer image
+unless `admission.image` overrides are set. Set `admission.enabled=false` to
+skip the admission Deployment, Service, and admission-only RBAC.
+
+| Value | Default | Description |
+| --- | --- | --- |
+| `admission.enabled` | `false` | Render the admission backend Deployment, Service, and admission-only RBAC. |
+| `admission.replicas` | `1` | Admission backend replica count. |
+| `admission.containerdConfigPath` | `/var/lib/rancher/k3s/agent/etc/containerd` | Host containerd config directory mounted read-only into the admission backend for sandbox image detection. |
+| `admission.podLabels` | `{}` | Extra labels for admission pods. |
+| `admission.podAnnotations` | `{}` | Extra annotations for admission pods. |
+
+For non-k3s clusters, set `admission.containerdConfigPath` to the host
+containerd config directory containing `config.toml`:
+
+```bash
+helm upgrade --install sysrunc ./charts/sysrunc \
+  --set admission.enabled=true \
+  --set admission.containerdConfigPath=/etc/containerd
+```
+
+### Snapshotter
+
+The installer passes `snapshotter.enabled` to the deploy script inside the shared
+image. Set it to `false` to install Sysrunc without the host-side
+`sysrunc-snapshotter` service and containerd proxy snapshotter configuration.
+
+| Value | Default | Description |
+| --- | --- | --- |
+| `snapshotter.enabled` | `false` | Install and configure the host-side sysrunc-snapshotter service. |

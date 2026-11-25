@@ -1,0 +1,244 @@
+#!/bin/sh
+# Reconcile the Sysrunc runtime in a K3s node running inside a CKM container.
+#
+# Failures inside one reconcile pass must not terminate the process: the
+# The inner daemons enter an independent node cgroup before exec, so an agent
+# image rollout leaves their FUSE sessions and snapshotter RPC alive.
+# `-e` is applied per pass; only `-u` is global.
+set -u
+
+host_data=${SYSRUNC_INNER_HOST_DATA:-/host/var/lib/rancher/k3s}
+node_data=/var/lib/rancher/k3s
+agent_dir=$host_data/sysrunc-inner
+node_agent_dir=$node_data/sysrunc-inner
+template=$host_data/agent/etc/containerd/config-v3.toml.tmpl
+active_config=$host_data/agent/etc/containerd/config.toml
+pending=$agent_dir/restart-pending
+original=$agent_dir/original-config-v3.toml.tmpl
+original_absent=$agent_dir/original-config-v3.toml.tmpl.absent
+image_bins=/opt/sysrunc/bin/generic
+image_script=/opt/sysrunc/scripts/sysrunc-inner-k3s.sh
+target_pid=
+
+die() { echo "sysrunc-inner-agent: $*" >&2; exit 1; }
+log() { echo "sysrunc-inner-agent: $*" >&2; }
+
+# hostPID makes the CKM K3s server visible, but the agent still has its own
+# mount and network namespaces. Enter all three before touching L1 /run.
+find_target() {
+  if [ -n "${SYSRUNC_INNER_TARGET_PID:-}" ]; then
+    target_pid=$SYSRUNC_INNER_TARGET_PID
+    if [ ! -e "/proc/$target_pid/exe" ]; then
+      log "target PID $target_pid is gone"
+      return 1
+    fi
+    return 0
+  fi
+  for proc in /proc/[0-9]*; do
+    [ -e "$proc/exe" ] || continue
+    case "$(readlink "$proc/exe" 2>/dev/null || true)" in
+      */k3s|*/k3s\ \(deleted\)) ;;
+      *) continue ;;
+    esac
+    # K3s overwrites its argv with one padded string, so /proc/cmdline may
+    # contain "/bin/k3s server" in argv[0] and no argv[1].
+    command=$(tr '\000' '\n' <"$proc/cmdline" 2>/dev/null || true)
+    first=$(printf '%s\n' "$command" | sed -n '1p')
+    second=$(printf '%s\n' "$command" | sed -n '2p')
+    case "$first:$second" in
+      */k3s\ server*:*|*/k3s:server) ;;
+      *) continue ;;
+    esac
+    target_pid=${proc##*/}
+    return 0
+  done
+  # K3s is briefly absent while the CKM server container is restarting. Report
+  # the miss so the caller can retry on its next pass instead of exiting.
+  log "cannot find the CKM K3s server process"
+  return 1
+}
+
+in_node() {
+  nsenter -m -n -p -r -t "$target_pid" -- "$@"
+}
+
+active_has_lite() {
+  [ -f "$active_config" ] || return 1
+  grep -Fq 'runtimes.sysrunc]' "$active_config" || return 1
+  grep -Fq "$node_bin_dir/sysrunc" "$active_config" || return 1
+  grep -Fq 'snapshotter = "sysrunc"' "$active_config" || return 1
+}
+
+status() {
+  [ -r "$agent_dir/current" ] || return 1
+  release=$(cat "$agent_dir/current")
+  node_bin_dir=$node_agent_dir/releases/$release/bin/generic
+  active_has_lite || return 1
+  find_target || return 1
+  in_node /bin/sh -ec '
+		test -S /run/sysrunc/sysfs.sock
+		awk '\''$4 == "00010000" && $8 == "/run/sysrunc/sysfs.sock" { found=1 } END { exit !found }'\'' /proc/net/unix
+    test -S /run/sysrunc/sysrunc-snapshotter.sock
+    awk '\''$4 == "00010000" && $8 == "/run/sysrunc/sysrunc-snapshotter.sock" { found=1 } END { exit !found }'\'' /proc/net/unix
+    # Query the snapshotter directly: containerd can serve an empty snapshot
+    # list from its metadata without ever contacting the snapshotter.
+    # A fresh snapshotter has no namespace bucket yet. This exact server
+    # response still proves the RPC worked; transport errors must fail.
+    reply=$(/bin/ctr --address /run/sysrunc/sysrunc-snapshotter.sock --timeout 3s snapshots ls 2>&1) ||
+      printf "%s\n" "$reply" | grep -Fxq "ctr: bucket does not exist: not found"
+    /bin/crictl --runtime-endpoint unix:///run/k3s/containerd/containerd.sock info | grep -Fq "sysrunc"
+  ' >/dev/null 2>&1
+}
+
+stage_payload() {
+  [ -x "$image_bins/sysrunc" ] || die "missing sysrunc in image"
+  [ -x "$image_bins/sysrunc-fs" ] || die "missing sysrunc-fs in image"
+  [ -x "$image_bins/sysrunc-snapshotter" ] || die "missing sysrunc-snapshotter in image"
+	[ -x "$image_bins/fusermount3" ] || die "missing fusermount3 in image"
+  [ -x "$image_bins/fuse-overlayfs" ] || die "missing fuse-overlayfs in image"
+  # rsync feeds the release hash below; without this check a missing binary
+  # fails in sha256sum under `set -e` and leaves no diagnostic behind.
+  [ -x "$image_bins/rsync" ] || die "missing rsync in image"
+  [ -r "$image_script" ] || die "missing sysrunc-inner-k3s.sh in image"
+  # A content-derived release directory leaves running executables intact
+  # while a new image is installed. The config names the exact release.
+  release=$(sha256sum "$image_bins/sysrunc" "$image_bins/sysrunc-fs" "$image_bins/sysrunc-snapshotter" "$image_bins/fusermount3" "$image_bins/fuse-overlayfs" \
+    "$image_bins/rsync" "$image_script" | sha256sum | cut -d ' ' -f 1)
+  node_bin_dir=$node_agent_dir/releases/$release/bin/generic
+  release_dir=$agent_dir/releases/$release
+  if [ ! -x "$release_dir/bin/generic/sysrunc" ] || [ ! -r "$release_dir/scripts/sysrunc-inner-k3s.sh" ]; then
+    mkdir -p "$agent_dir/releases"
+    stage=$agent_dir/releases/.stage-$$
+    mkdir -p "$stage/bin/generic" "$stage/scripts"
+    cp -a "$image_bins/." "$stage/bin/generic/"
+    cp "$image_script" "$stage/scripts/sysrunc-inner-k3s.sh"
+    chmod 0755 "$stage/scripts/sysrunc-inner-k3s.sh"
+    if [ ! -d "$release_dir" ]; then
+      mv "$stage" "$release_dir"
+    else
+      # A previous interrupted copy is replaced only before it is selected.
+      cp -a "$stage/." "$release_dir/"
+      rm -rf "$stage"
+    fi
+  fi
+  if [ ! -f "$agent_dir/current" ] || [ "$(cat "$agent_dir/current")" != "$release" ]; then
+    printf '%s\n' "$release" >"$agent_dir/current.tmp"
+    mv "$agent_dir/current.tmp" "$agent_dir/current"
+  fi
+}
+
+save_original() {
+  [ -e "$original" ] && return
+  [ -e "$original_absent" ] && return
+  if [ -f "$template" ] && ! grep -Fq '# Managed by Sysrunc nested runtime.' "$template"; then
+    cp -p "$template" "$original"
+  else
+    : >"$original_absent"
+  fi
+}
+
+launch_runtime() {
+  find_target || return 1
+  SYSRUNC_INNER_BIN_DIR="$node_bin_dir" \
+  SYSRUNC_HELPER_DIR=/bin/aux \
+  SYSRUNC_INNER_START_DAEMONS=true \
+  SYSRUNC_INNER_CONFIG_ONLY="${1:-false}" \
+  in_node /bin/sh "$node_agent_dir/releases/$release/scripts/sysrunc-inner-k3s.sh"
+}
+
+request_restart() {
+  desired=$(sha256sum "$template" | cut -d ' ' -f 1)
+  if [ -f "$pending" ] && [ "$(cat "$pending")" = "$desired" ]; then
+    # One TERM can be lost: the target may exit before the signal is delivered,
+    # or the outer Deployment may not have rebuilt the server yet. Without a
+    # retry the agent waits forever and readiness stays red for the whole
+    # lifetime of the Pod.
+    if [ -n "$(find "$pending" -mmin +2 2>/dev/null)" ]; then
+      log "restart still pending after 2 minutes; re-issuing TERM"
+      touch "$pending"
+      kill -TERM "$target_pid" 2>/dev/null || true
+      return 0
+    fi
+    log "waiting for K3s to load desired config $desired"
+    return 0
+  fi
+  printf '%s\n' "$desired" >"$pending.tmp"
+  mv "$pending.tmp" "$pending"
+  log "K3s config changed; requesting one CKM server restart"
+  # Terminating K3s ends the CKM server command. The outer Deployment restarts
+  # its Server container, and the nested DaemonSet reconciles after recovery.
+  kill -TERM "$target_pid" 2>/dev/null || true
+}
+
+install_once() {
+  mkdir -p "$agent_dir"
+  stage_payload
+  save_original
+  if status; then
+    rm -f "$pending" "$agent_dir/restart-required"
+    return 0
+  fi
+  before=
+  [ ! -f "$template" ] || before=$(sha256sum "$template" | cut -d ' ' -f 1)
+  launch_runtime true
+  after=$(sha256sum "$template" | cut -d ' ' -f 1)
+  if active_has_lite; then
+    launch_runtime false
+  fi
+  if status; then
+    rm -f "$pending" "$agent_dir/restart-required"
+    return 0
+  fi
+  if [ "$before" != "$after" ] || { [ ! -f "$pending" ] && ! active_has_lite; }; then
+    request_restart
+  else
+    log "desired template installed; waiting for K3s and snapshotter"
+  fi
+}
+
+uninstall() {
+  # The chart pre-delete Job checks for remaining lite Pods before calling us.
+  # A failed safety check must never remove the handler under running Pods.
+  [ -d "$agent_dir" ] || return 0
+  find_target || return 1
+  if [ -r "$agent_dir/current" ]; then
+    release=$(cat "$agent_dir/current")
+    if [ -r "$agent_dir/releases/$release/scripts/sysrunc-inner-k3s.sh" ]; then
+      in_node /bin/sh "$node_agent_dir/releases/$release/scripts/sysrunc-inner-k3s.sh" --stop-daemons
+    fi
+  fi
+  changed=false
+  if [ -f "$original" ]; then
+    cp -p "$original" "$template"
+    changed=true
+  elif [ -f "$original_absent" ] && [ -f "$template" ] && \
+       grep -Fq '# Managed by Sysrunc nested runtime.' "$template"; then
+    rm -f "$template"
+    changed=true
+  fi
+  rm -f "$agent_dir/current" "$pending"
+  rm -f "$host_data/agent/etc/kubelet.conf.d/99-sysrunc-inner-eviction.conf"
+  rm -rf "$agent_dir/releases"
+  rm -f "$original" "$original_absent"
+  if [ "$changed" = true ]; then
+    # The pre-delete Job and Helm client run inside this K3s process. Killing
+    # it here leaves the Helm release stuck in the uninstalling state.
+    : >"$agent_dir/restart-required"
+    log "restored the pre-Chart containerd template; restart CKM K3s after Helm uninstall completes"
+  fi
+}
+
+case "${1:-}" in
+  install)
+    while :; do
+      # Keep one failing pass from terminating the container. Restarting the
+      # agent would kill the runtime daemons it owns and cannot recover while
+      # K3s is starting, which turns a transient miss into CrashLoopBackOff.
+      ( set -e; install_once ) || log "reconcile pass failed (exit $?); retrying"
+      sleep 10
+    done
+    ;;
+  status) ( set -e; status ) ;;
+  uninstall) ( set -e; uninstall ) ;;
+  *) die "usage: $0 install|status|uninstall" ;;
+esac

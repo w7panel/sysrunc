@@ -1,0 +1,76 @@
+//
+// Sysrunc FS protocol definitions.
+//
+
+syntax = "proto3";
+
+// The protobuf package remains stable for existing Unix socket clients.
+option go_package = "./;sysruncFsProtobuf";
+
+import "google/protobuf/timestamp.proto";
+
+package protobuf;
+
+// Sysrunc FS registration service.
+service sysruncStateChannel {
+
+    rpc GetMountpoint(MountpointReq) returns (MountpointResp) {}
+    rpc ContainerPreRegistration (ContainerData) returns (Response) {}
+    rpc ContainerRegistration (ContainerData) returns (Response) {}
+    rpc ContainerUnregistration (ContainerData) returns (Response) {}
+    rpc ContainerUpdate (ContainerData) returns (Response) {}
+}
+
+// Legacy service retained while existing socket clients roll forward.
+service sysboxStateChannel {
+
+    // Queries sysrunc-fs for the FUSE mountpoint
+    rpc GetMountpoint(MountpointReq) returns (MountpointResp) {}
+
+    // Generates a container-preregistration message
+    rpc ContainerPreRegistration (ContainerData) returns (Response) {}
+
+    // Generates a container-registration message
+    rpc ContainerRegistration (ContainerData) returns (Response) {}
+
+    // Generates a container-unregistration message
+    rpc ContainerUnregistration (ContainerData) returns (Response) {}
+
+    // Generates a container-update message
+    rpc ContainerUpdate (ContainerData) returns (Response) {}
+}
+
+//
+// Request message sent by the runtime to sysrunc-fs during container
+// registration, unregistration and update phases.
+//
+message ContainerData {
+  string Id                       = 1;
+  int32 InitPid                   = 2;
+  string Hostname                 = 3;
+  google.protobuf.Timestamp Ctime = 4;
+  int32 UidFirst                  = 5;
+  int32 UidSize                   = 6;
+  int32 GidFirst                  = 7;
+  int32 GidSize                   = 8;
+  repeated string ProcRoPaths     = 9;
+  repeated string ProcMaskPaths   = 10;
+  string Netns                    = 11;
+  string CgroupData               = 12;
+  string Pidns                    = 13;
+  uint64 InitStartTime            = 14;
+  reserved 15;
+  bool Ticker                     = 16;
+}
+
+// Response message sent from sysrunc-fs to the runtime.
+message Response {
+  bool Success = 1;
+}
+
+message MountpointReq {
+}
+
+message MountpointResp {
+  string Mountpoint = 1;
+}

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sysrunc-l2-fs-uuid-1124
+  namespace: default
+  annotations:
+    sysrunc.io/fs: "true"
+spec:
+  runtimeClassName: sysrunc
+  restartPolicy: Never
+  containers:
+    - name: nginx
+      image: ccr.ccs.tencentyun.com/afan-public/nginx:latest
+      imagePullPolicy: IfNotPresent

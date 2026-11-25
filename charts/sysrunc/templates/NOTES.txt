@@ -1,0 +1,27 @@
+Sysrunc installer manifests have been installed.
+
+Check installer pods:
+  kubectl get pods -n {{ include "sysrunc.namespace" . }} -l app.kubernetes.io/name={{ include "sysrunc.name" . }},app.kubernetes.io/instance={{ .Release.Name }}
+
+Check RuntimeClass:
+{{- if eq (include "sysrunc.installMode" .) "nested" }}
+  kubectl get runtimeclass sysrunc
+{{- else }}
+  kubectl get runtimeclass sysrunc
+{{- end }}
+
+{{- if .Values.admission.enabled }}
+Check sysrunc-admission backend pods:
+  kubectl get pods -n {{ include "sysrunc.namespace" . }} -l app.kubernetes.io/component=sysrunc-admission
+
+Check sysrunc-admission Service:
+  kubectl get svc -n {{ include "sysrunc.namespace" . }} {{ include "sysrunc.admissionServiceName" . }}
+
+Check MutatingWebhookConfiguration:
+  kubectl get mutatingwebhookconfiguration {{ include "sysrunc.admissionWebhookName" . }}
+
+Check backend-owned TLS resources:
+  kubectl get secret -n {{ include "sysrunc.namespace" . }} {{ include "sysrunc.admissionCASecretName" . }} {{ include "sysrunc.admissionTLSSecretName" . }}
+{{- else }}
+Admission backend is disabled by admission.enabled=false.
+{{- end }}

@@ -1,0 +1,18 @@
+[Unit]
+Description=sysrunc-snapshotter (containerd proxy snapshotter for Sysrunc rootfs persistence)
+PartOf=sysrunc.service
+After=sysrunc-fs.service
+Before=containerd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sysrunc-snapshotter --socket /run/sysrunc-snapshotter.sock --root /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.sysrunc --containerd-socket /run/k3s/containerd/containerd.sock
+TimeoutStartSec=45
+TimeoutStopSec=90
+StartLimitInterval=0
+OOMScoreAdjust=-500
+LimitNOFILE=infinity
+LimitNPROC=infinity
+
+[Install]
+WantedBy=sysrunc.service

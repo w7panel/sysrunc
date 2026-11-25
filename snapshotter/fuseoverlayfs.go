@@ -1,0 +1,836 @@
+//go:build linux
+
+/*
+   Copyright The containerd Authors.
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package sysboxsnapshotter
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+
+	"github.com/containerd/containerd/v2/core/mount"
+	"github.com/containerd/containerd/v2/core/snapshots"
+	"github.com/containerd/containerd/v2/core/snapshots/storage"
+	"github.com/containerd/continuity/fs"
+	"github.com/containerd/log"
+	"github.com/moby/locker"
+	"github.com/w7panel/sysrunc/snapshotter/rootfs"
+	"golang.org/x/sys/unix"
+)
+
+const (
+	fuseoverlayfsBinary = "fuse-overlayfs"
+)
+
+// SnapshotterConfig is used to configure the overlay snapshotter instance
+type SnapshotterConfig struct {
+	asyncRemove bool
+	rootfsHooks RootfsHooks
+}
+
+// Opt is an option to configure the overlay snapshotter
+type Opt func(config *SnapshotterConfig) error
+
+// AsynchronousRemove defers removal of filesystem content until
+// the Cleanup method is called. Removals will make the snapshot
+// referred to by the key unavailable and make the key immediately
+// available for re-use.
+//
+// AsynchronousRemove is untested for fuse-overlayfs
+func AsynchronousRemove(config *SnapshotterConfig) error {
+	config.asyncRemove = true
+	return nil
+}
+
+type snapshotter struct {
+	materializeLocks locker.Locker
+	root             string
+	ms               *storage.MetaStore
+	asyncRemove      bool
+	rootfsHooks      RootfsHooks
+}
+
+// NewSnapshotter returns a Snapshotter which uses overlayfs. The overlayfs
+// diffs are stored under the provided root. A metadata file is stored under
+// the root.
+func NewSnapshotter(root string, opts ...Opt) (snapshots.Snapshotter, error) {
+	var config SnapshotterConfig
+	for _, opt := range opts {
+		if err := opt(&config); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return nil, err
+	}
+	ms, err := storage.NewMetaStore(filepath.Join(root, "metadata.db"))
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.Mkdir(filepath.Join(root, "snapshots"), 0700); err != nil && !os.IsExist(err) {
+		return nil, err
+	}
+
+	return &snapshotter{
+		root:        root,
+		ms:          ms,
+		asyncRemove: config.asyncRemove,
+		rootfsHooks: config.rootfsHooks,
+	}, nil
+}
+
+// Stat returns the info for an active or committed snapshot by name or
+// key.
+//
+// Should be used for parent resolution, existence checks and to discern
+// the kind of snapshot.
+func (o *snapshotter) Stat(ctx context.Context, key string) (snapshots.Info, error) {
+	ctx, t, err := o.ms.TransactionContext(ctx, false)
+	if err != nil {
+		return snapshots.Info{}, err
+	}
+	defer t.Rollback()
+	_, info, _, err := storage.GetInfo(ctx, key)
+	if err != nil {
+		return snapshots.Info{}, err
+	}
+
+	return info, nil
+}
+
+func (o *snapshotter) Update(ctx context.Context, info snapshots.Info, fieldpaths ...string) (snapshots.Info, error) {
+	ctx, t, err := o.ms.TransactionContext(ctx, true)
+	if err != nil {
+		return snapshots.Info{}, err
+	}
+
+	info, err = storage.UpdateInfo(ctx, info, fieldpaths...)
+	if err != nil {
+		t.Rollback()
+		return snapshots.Info{}, err
+	}
+
+	if err := t.Commit(); err != nil {
+		return snapshots.Info{}, err
+	}
+
+	return info, nil
+}
+
+// Usage returns the resources taken by the snapshot identified by key.
+//
+// For active snapshots, this will scan the usage of the overlay "diff" (aka
+// "upper") directory and may take some time.
+//
+// For committed snapshots, the value is returned from the metadata database.
+func (o *snapshotter) Usage(ctx context.Context, key string) (snapshots.Usage, error) {
+	ctx, t, err := o.ms.TransactionContext(ctx, false)
+	if err != nil {
+		return snapshots.Usage{}, err
+	}
+	id, info, usage, err := storage.GetInfo(ctx, key)
+	t.Rollback() // transaction no longer needed at this point.
+
+	if err != nil {
+		return snapshots.Usage{}, err
+	}
+
+	upperPath := o.upperPath(id)
+
+	if info.Kind == snapshots.KindActive {
+		du, err := fs.DiskUsage(ctx, upperPath)
+		if err != nil {
+			// TODO(stevvooe): Consider not reporting an error in this case.
+			return snapshots.Usage{}, err
+		}
+
+		usage = snapshots.Usage(du)
+	}
+
+	return usage, nil
+}
+
+func (o *snapshotter) Prepare(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
+	return o.createSnapshot(ctx, snapshots.KindActive, key, parent, opts)
+}
+
+func (o *snapshotter) View(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
+	return o.createSnapshot(ctx, snapshots.KindView, key, parent, opts)
+}
+
+// Mounts returns the mounts for the transaction identified by key. Can be
+// called on an read-write or readonly transaction.
+//
+// This can be used to recover mounts after calling View or Prepare.
+func (o *snapshotter) Mounts(ctx context.Context, key string) ([]mount.Mount, error) {
+	ctx, t, err := o.ms.TransactionContext(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	s, err := storage.GetSnapshot(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	_, info, _, err := storage.GetInfo(ctx, key)
+	t.Rollback()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active mount: %w", err)
+	}
+	return o.mounts(ctx, key, s, info)
+}
+
+func (o *snapshotter) Commit(ctx context.Context, name, key string, opts ...snapshots.Opt) error {
+	ctx, t, err := o.ms.TransactionContext(ctx, true)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err != nil {
+			if rerr := t.Rollback(); rerr != nil {
+				log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
+			}
+		}
+	}()
+
+	// grab the existing id
+	id, _, _, err := storage.GetInfo(ctx, key)
+	if err != nil {
+		return err
+	}
+
+	usage, err := fs.DiskUsage(ctx, o.upperPath(id))
+	if err != nil {
+		return err
+	}
+
+	if _, err = storage.CommitActive(ctx, key, name, snapshots.Usage(usage), opts...); err != nil {
+		return fmt.Errorf("failed to commit snapshot: %w", err)
+	}
+	return t.Commit()
+}
+
+// Remove abandons the snapshot identified by key. The snapshot will
+// immediately become unavailable and unrecoverable. Disk space will
+// be freed up on the next call to `Cleanup`.
+func (o *snapshotter) Remove(ctx context.Context, key string) (err error) {
+	ctx, t, err := o.ms.TransactionContext(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			if rerr := t.Rollback(); rerr != nil {
+				log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
+			}
+		}
+	}()
+
+	_, _, err = storage.Remove(ctx, key)
+	if err != nil {
+		return fmt.Errorf("failed to remove: %w", err)
+	}
+
+	if !o.asyncRemove {
+		var removals []string
+		removals, err = o.getCleanupDirectories(ctx, t)
+		if err != nil {
+			return fmt.Errorf("unable to get directories for removal: %w", err)
+		}
+
+		// Remove directories after the transaction is closed, failures must not
+		// return error since the transaction is committed with the removal
+		// key no longer available.
+		defer func() {
+			if err == nil {
+				for _, dir := range removals {
+					if err := o.removeSnapshotDirectory(dir); err != nil {
+						log.G(ctx).WithError(err).WithField("path", dir).Warn("failed to remove directory")
+					}
+				}
+			}
+		}()
+
+	}
+
+	if err := t.Commit(); err != nil {
+		return err
+	}
+	if o.rootfsHooks.HandoffStore != nil {
+		keys := []string{key}
+		if base := filepath.Base(key); base != key {
+			keys = append(keys, base)
+		}
+		for _, handoffKey := range keys {
+			if err := o.rootfsHooks.HandoffStore.Remove(ctx, handoffKey); err != nil {
+				log.G(ctx).WithError(err).WithField("snapshot", handoffKey).Warn("failed to remove persistent special handoff")
+			}
+		}
+	}
+	return nil
+}
+
+// Walk the committed snapshots.
+func (o *snapshotter) Walk(ctx context.Context, fn snapshots.WalkFunc, fs ...string) error {
+	ctx, t, err := o.ms.TransactionContext(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer t.Rollback()
+	return storage.WalkInfo(ctx, fn, fs...)
+}
+
+// Cleanup cleans up disk resources from removed or abandoned snapshots
+func (o *snapshotter) Cleanup(ctx context.Context) error {
+	cleanup, err := o.cleanupDirectories(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, dir := range cleanup {
+		if err := o.removeSnapshotDirectory(dir); err != nil {
+			log.G(ctx).WithError(err).WithField("path", dir).Warn("failed to remove directory")
+		}
+	}
+
+	return nil
+}
+
+func (o *snapshotter) cleanupDirectories(ctx context.Context) ([]string, error) {
+	// Get a write transaction to ensure no other write transaction can be entered
+	// while the cleanup is scanning.
+	ctx, t, err := o.ms.TransactionContext(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+
+	defer t.Rollback()
+	return o.getCleanupDirectories(ctx, t)
+}
+
+func (o *snapshotter) getCleanupDirectories(ctx context.Context, t storage.Transactor) ([]string, error) {
+	ids, err := storage.IDMap(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	snapshotDir := filepath.Join(o.root, "snapshots")
+	fd, err := os.Open(snapshotDir)
+	if err != nil {
+		return nil, err
+	}
+	defer fd.Close()
+
+	dirs, err := fd.Readdirnames(0)
+	if err != nil {
+		return nil, err
+	}
+
+	cleanup := []string{}
+	for _, d := range dirs {
+		if _, ok := ids[d]; ok {
+			continue
+		}
+
+		cleanup = append(cleanup, filepath.Join(snapshotDir, d))
+	}
+
+	return cleanup, nil
+}
+
+func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, key, parent string, opts []snapshots.Opt) (_ []mount.Mount, err error) {
+	ctx, t, err := o.ms.TransactionContext(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+
+	var td, path string
+	defer func() {
+		if err != nil {
+			if td != "" {
+				if err1 := os.RemoveAll(td); err1 != nil {
+					log.G(ctx).WithError(err1).Warn("failed to cleanup temp snapshot directory")
+				}
+			}
+			if path != "" {
+				if err1 := o.removeSnapshotDirectory(path); err1 != nil {
+					log.G(ctx).WithError(err1).WithField("path", path).Error("failed to reclaim snapshot directory, directory may need removal")
+					err = fmt.Errorf("failed to remove path: %v: %w", err1, err)
+				}
+			}
+		}
+	}()
+
+	snapshotDir := filepath.Join(o.root, "snapshots")
+	td, err = o.prepareDirectory(ctx, snapshotDir, kind)
+	if err != nil {
+		if rerr := t.Rollback(); rerr != nil {
+			log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
+		}
+		return nil, fmt.Errorf("failed to create prepare snapshot dir: %w", err)
+	}
+	rollback := true
+	defer func() {
+		if rollback {
+			if rerr := t.Rollback(); rerr != nil {
+				log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
+			}
+		}
+	}()
+
+	s, err := storage.CreateSnapshot(ctx, kind, key, parent, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create snapshot: %w", err)
+	}
+
+	if len(s.ParentIDs) > 0 {
+		st, err := os.Stat(o.upperPath(s.ParentIDs[0]))
+		if err != nil {
+			return nil, fmt.Errorf("failed to stat parent: %w", err)
+		}
+
+		stat := st.Sys().(*syscall.Stat_t)
+
+		if err := os.Lchown(filepath.Join(td, "fs"), int(stat.Uid), int(stat.Gid)); err != nil {
+			if rerr := t.Rollback(); rerr != nil {
+				log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
+			}
+			return nil, fmt.Errorf("failed to chown: %w", err)
+		}
+	}
+
+	path = filepath.Join(snapshotDir, s.ID)
+	if err = os.Rename(td, path); err != nil {
+		return nil, fmt.Errorf("failed to rename: %w", err)
+	}
+	td = ""
+
+	_, info, _, err := storage.GetInfo(ctx, key)
+
+	rollback = false
+	if err = t.Commit(); err != nil {
+		return nil, fmt.Errorf("commit failed: %w", err)
+	}
+	// Metadata now owns this directory. A failed materialization can be retried
+	// by Mounts or removed through Remove; do not delete a registered snapshot.
+	path = ""
+
+	return o.mounts(ctx, key, s, info)
+}
+
+func (o *snapshotter) prepareDirectory(ctx context.Context, snapshotDir string, kind snapshots.Kind) (string, error) {
+	td, err := os.MkdirTemp(snapshotDir, "new-")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp dir: %w", err)
+	}
+
+	if err := os.Mkdir(filepath.Join(td, "fs"), 0755); err != nil {
+		return td, err
+	}
+
+	if kind == snapshots.KindActive {
+		if err := os.Mkdir(filepath.Join(td, "work"), 0711); err != nil {
+			return td, err
+		}
+	}
+
+	return td, nil
+}
+
+func (o *snapshotter) mounts(ctx context.Context, key string, s storage.Snapshot, info snapshots.Info) ([]mount.Mount, error) {
+	if len(s.ParentIDs) == 0 {
+		// if we only have one layer/no parents then just return a bind mount as overlay
+		// will not work
+		roFlag := "rw"
+		if s.Kind == snapshots.KindView {
+			roFlag = "ro"
+		}
+
+		return []mount.Mount{
+			{
+				Source: o.upperPath(s.ID),
+				Type:   "bind",
+				Options: []string{
+					roFlag,
+					"rbind",
+				},
+			},
+		}, nil
+	}
+	var options []string
+
+	if s.Kind == snapshots.KindActive {
+		options = append(options,
+			fmt.Sprintf("workdir=%s", o.workPath(s.ID)),
+			fmt.Sprintf("upperdir=%s", o.upperPath(s.ID)),
+		)
+	} else if len(s.ParentIDs) == 1 {
+		return []mount.Mount{
+			{
+				Source: o.upperPath(s.ParentIDs[0]),
+				Type:   "bind",
+				Options: []string{
+					"ro",
+					"rbind",
+				},
+			},
+		}, nil
+	}
+
+	parentPaths := make([]string, len(s.ParentIDs))
+	for i := range s.ParentIDs {
+		parentPaths[i] = o.upperPath(s.ParentIDs[i])
+	}
+
+	options = append(options, fmt.Sprintf("lowerdir=%s", strings.Join(parentPaths, ":")))
+	var idMappingOptions []string
+	if mapping, ok := info.Labels["containerd.io/snapshot/uidmapping"]; ok {
+		idMappingOptions = append(idMappingOptions, fmt.Sprintf("uidmapping=%s", convertIDMappingOption(mapping)))
+	}
+	if mapping, ok := info.Labels["containerd.io/snapshot/gidmapping"]; ok {
+		idMappingOptions = append(idMappingOptions, fmt.Sprintf("gidmapping=%s", convertIDMappingOption(mapping)))
+	}
+	if len(idMappingOptions) > 0 {
+		// containerd's RemoveIDMapOption treats any option beginning with
+		// "uidmap" or "gidmap" as one of its kernel idmap options. In
+		// containerd 2.2.3 it also panics when both are present. Keep the
+		// fuse-overlayfs mappings in one valid comma-separated option group,
+		// prefixed by nodev so containerd does not misclassify them.
+		options = append(options, "nodev,"+strings.Join(idMappingOptions, ","))
+	}
+	mounts := []mount.Mount{
+		{
+			Type:    "fuse3." + fuseoverlayfsBinary,
+			Source:  "overlay",
+			Options: options,
+		},
+	}
+	// Image extraction snapshots must remain layered; they are never OCI rootfs.
+	if info.Labels["containerd.io/snapshot.ref"] != "" {
+		return mounts, nil
+	}
+	if s.Kind == snapshots.KindActive && runningInNestedUserNS() {
+		// A fuse-overlayfs mount created inside the L1 Sysbox user namespace
+		// cannot be used as a mount target by the L2 OCI runtime (proc, tmpfs,
+		// projected volumes, and PVC binds all fail with ENOENT). Materialize
+		// the merged lower+upper view once into the active snapshot directory,
+		// then hand containerd a normal bind mount. The active directory is the
+		// durable writable layer, so all subsequent L2 changes persist there.
+		// The rootfs hook must run before materialization: it may move the
+		// writable layer from the snapshot directory to a PVC. Materializing
+		// before the rewrite silently bypasses rootfs persistence.
+		rewritten, err := applyRootfsHook(ctx, o.rootfsHooks, key, mounts)
+		if err != nil {
+			return nil, err
+		}
+		upper, work, err := materializedRootfsPaths(rewritten)
+		if err != nil {
+			return nil, err
+		}
+		if err := o.materializeActiveSnapshot(ctx, s.ID, rewritten[0], upper, work); err != nil {
+			return nil, err
+		}
+		return []mount.Mount{{
+			Source:  upper,
+			Type:    "bind",
+			Options: []string{"rw", "rbind"},
+		}}, nil
+	}
+	if s.Kind != snapshots.KindActive {
+		return mounts, nil
+	}
+	return applyRootfsHook(ctx, o.rootfsHooks, key, mounts)
+
+}
+
+func runningInNestedUserNS() bool {
+	b, err := os.ReadFile("/proc/self/uid_map")
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(b))
+	if len(fields) < 3 || fields[0] != "0" {
+		return false
+	}
+	hostID, err := strconv.ParseUint(fields[1], 10, 32)
+	if err != nil {
+		return false
+	}
+	return hostID != 0
+}
+
+func materializedRootfsPaths(mounts []mount.Mount) (upper, work string, err error) {
+	if len(mounts) != 1 || mounts[0].Type != "fuse3."+fuseoverlayfsBinary {
+		return "", "", fmt.Errorf("expected one active fuse-overlayfs mount")
+	}
+	for _, option := range mounts[0].Options {
+		switch {
+		case strings.HasPrefix(option, "upperdir="):
+			upper = strings.TrimPrefix(option, "upperdir=")
+		case strings.HasPrefix(option, "workdir="):
+			work = strings.TrimPrefix(option, "workdir=")
+		}
+	}
+	if upper == "" || work == "" {
+		return "", "", fmt.Errorf("active fuse-overlayfs mount has no upperdir or workdir")
+	}
+	return upper, work, nil
+}
+
+// removeSnapshotDirectory never traverses a merged rootfs that failed to unmount.
+func (o *snapshotter) removeSnapshotDirectory(dir string) error {
+	o.materializeLocks.Lock(dir)
+	defer o.materializeLocks.Unlock(dir)
+	return removeSnapshotDirectory(dir, mount.UnmountAll)
+}
+
+func removeSnapshotDirectory(dir string, unmount func(string, int) error) error {
+	if err := unmount(filepath.Join(dir, "merged"), 0); err != nil {
+		return fmt.Errorf("unmount snapshot before removal: %w", err)
+	}
+	return os.RemoveAll(dir)
+}
+
+func (o *snapshotter) materializeActiveSnapshot(ctx context.Context, snapshotID string, mergedMount mount.Mount, upper, work string) (retErr error) {
+	dir := filepath.Join(o.root, "snapshots", snapshotID)
+	// Serialize Mounts retries and cleanup. Distinct snapshots may also use
+	// the same persistent upperdir, which needs its own lock.
+	o.materializeLocks.Lock(dir)
+	defer o.materializeLocks.Unlock(dir)
+	o.materializeLocks.Lock(upper)
+	defer o.materializeLocks.Unlock(upper)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	marker := filepath.Join(work, ".sysbox-materialized-rootfs")
+	if complete, err := materializedRootfsComplete(marker, upper); err != nil {
+		return err
+	} else if complete {
+		return nil
+	}
+	merged := filepath.Join(dir, "merged")
+	if err := os.MkdirAll(merged, 0o755); err != nil {
+		return fmt.Errorf("create temporary merged rootfs: %w", err)
+	}
+	// Resolve any previous failed unmount before mounting another view.
+	if err := mount.UnmountAll(merged, 0); err != nil {
+		return fmt.Errorf("unmount previous merged rootfs: %w", err)
+	}
+	if err := mergedMount.Mount(merged); err != nil {
+		return fmt.Errorf("mount temporary merged rootfs: %w", err)
+	}
+	mounted := true
+	defer func() {
+		if mounted {
+			if err := mount.UnmountAll(merged, 0); err != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("unmount temporary merged rootfs: %w", err))
+			}
+		}
+	}()
+	// Copy away from the mounted upper: existing PVC files alias the source,
+	// and cancellation must not leave a partially overwritten durable layer.
+	staged, err := os.MkdirTemp(work, ".sysbox-rootfs-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(staged)
+	if err := copyRootfs(ctx, staged, merged); err != nil {
+		return err
+	}
+	if err := mount.UnmountAll(merged, 0); err != nil {
+		return fmt.Errorf("unmount temporary merged rootfs: %w", err)
+	}
+	mounted = false
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return publishMaterializedRootfs(staged, upper, marker)
+}
+
+func rootfsInodeMarker(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("inode=%d\n", info.Sys().(*syscall.Stat_t).Ino), nil
+}
+
+func materializedRootfsComplete(marker, upper string) (bool, error) {
+	data, err := os.ReadFile(marker)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read rootfs materialization marker: %w", err)
+	}
+	if string(data) == "materialized\n" { // Existing releases used this marker.
+		return true, nil
+	}
+	expected, err := rootfsInodeMarker(upper)
+	return string(data) == expected, err
+}
+
+func publishMaterializedRootfs(staged, upper, marker string) error {
+	// Write the future upper inode before exchanging directories. A crash on
+	// either side of exchange is distinguishable without overlaying an already
+	// complete rootfs again (which would resurrect previously whiteouted files).
+	data, err := rootfsInodeMarker(staged)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(marker, []byte(data), 0o600); err != nil {
+		return fmt.Errorf("write rootfs materialization marker: %w", err)
+	}
+	// Both directories are on the upper filesystem. Unsupported filesystems
+	// fail without replacing the original upper; do not use a non-atomic fallback.
+	if err := unix.Renameat2(unix.AT_FDCWD, staged, unix.AT_FDCWD, upper, unix.RENAME_EXCHANGE); err != nil {
+		return fmt.Errorf("publish materialized rootfs: %w", err)
+	}
+	return nil
+}
+
+func copyRootfs(ctx context.Context, dst, src string) error {
+	// GNU cp preserves hardlinks, ownership, modes and xattrs. The long option
+	// rejects BusyBox cp rather than silently losing xattrs. CommandContext
+	// kills and waits for the single copy process on cancellation.
+	output, err := exec.CommandContext(ctx, "cp", "-a", "--preserve=all", "--", src+"/.", dst).CombinedOutput()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		return fmt.Errorf("materialize active rootfs (GNU cp required): %w: %s", err, output)
+	}
+	return nil
+}
+
+type RootfsHooks struct {
+	IdentityResolver rootfs.IdentityResolver
+	MetadataResolver rootfs.MetadataResolver
+	PVCResolver      rootfs.PVCMountPathResolver
+	Preparer         rootfs.RootfsPreparer
+	HandoffStore     rootfs.PersistentSpecialHandoffStore
+}
+
+func WithRootfsHooks(hooks RootfsHooks) Opt {
+	return func(config *SnapshotterConfig) error {
+		config.rootfsHooks = hooks
+		return nil
+	}
+}
+
+func applyRootfsHook(ctx context.Context, hooks RootfsHooks, snapshotKey string, mounts []mount.Mount) ([]mount.Mount, error) {
+	if hooks.IdentityResolver == nil || hooks.MetadataResolver == nil || hooks.PVCResolver == nil || hooks.Preparer == nil {
+		return mounts, nil
+	}
+	request, err := hooks.IdentityResolver.ResolveIdentity(ctx, snapshotKey)
+	if err != nil {
+		if errors.Is(err, rootfs.ErrContainerIdentityUnavailable) {
+			return mounts, nil
+		}
+		return nil, err
+	}
+	spec, err := hooks.MetadataResolver.ResolveRootfsRwLayer(ctx, request)
+	if errors.Is(err, rootfs.ErrRootfsRwLayerNotConfigured) {
+		return mounts, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if spec.Sidecar {
+		return mounts, nil
+	}
+	pvcMountPath, err := hooks.PVCResolver.ResolvePVCMountPath(ctx, request, spec)
+	if err != nil {
+		return nil, err
+	}
+	prepared, err := hooks.Preparer.PrepareRootfsRwLayer(ctx, rootfs.PrepareRootfsRequest{
+		SnapshotKey:   request.SnapshotKey,
+		PodUID:        request.PodUID,
+		ContainerName: request.ContainerName,
+		Path:          spec.Path,
+		PVCMountPath:  pvcMountPath,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if spec.PersistentSpecialMounts {
+		if hooks.HandoffStore == nil {
+			return nil, fmt.Errorf("persistent special handoff store is not configured")
+		}
+		if err := hooks.HandoffStore.Write(ctx, rootfs.PersistentSpecialHandoff{
+			Version:       rootfs.PersistentSpecialHandoffVersion,
+			SnapshotKey:   request.SnapshotKey,
+			PodUID:        request.PodUID,
+			ContainerName: request.ContainerName,
+			VolumeName:    spec.VolumeName,
+			PVCMountPath:  pvcMountPath,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return rewriteFuseOverlayMounts(mounts, prepared.UpperDir, prepared.WorkDir), nil
+}
+
+func rewriteFuseOverlayMounts(mounts []mount.Mount, upperDir, workDir string) []mount.Mount {
+	rewritten := make([]mount.Mount, len(mounts))
+	for i, m := range mounts {
+		next := m
+		nextOptions := make([]string, 0, len(m.Options))
+		for _, option := range m.Options {
+			switch {
+			case m.Type == "fuse3."+fuseoverlayfsBinary && strings.HasPrefix(option, "upperdir="):
+				nextOptions = append(nextOptions, "upperdir="+upperDir)
+			case m.Type == "fuse3."+fuseoverlayfsBinary && strings.HasPrefix(option, "workdir="):
+				nextOptions = append(nextOptions, "workdir="+workDir)
+			default:
+				nextOptions = append(nextOptions, option)
+			}
+		}
+		next.Options = nextOptions
+		rewritten[i] = next
+	}
+	return rewritten
+}
+
+func (o *snapshotter) upperPath(id string) string {
+	return filepath.Join(o.root, "snapshots", id, "fs")
+}
+
+func (o *snapshotter) workPath(id string) string {
+	return filepath.Join(o.root, "snapshots", id, "work")
+}
+
+// Close closes the snapshotter
+func (o *snapshotter) Close() error {
+	return o.ms.Close()
+}
+
+// fuseIDMappingOption converts mapping entries joined with ',' to ':'
+// This is expected by the fuse-overlayfs program:
+// https://github.com/containers/fuse-overlayfs/blob/main/fuse-overlayfs.1.md
+func convertIDMappingOption(label string) string {
+	return strings.ReplaceAll(label, ",", ":")
+}

@@ -1,0 +1,20 @@
+Source provenance
+=================
+
+This repository was initialized from /root/workspace/sysbox at commit
+82751995d340ac855f2e3b2ffd7eeb03dbaccf8b (2026-11-23 workspace state).
+The copied components and their source revisions are:
+
+- sysbox-runc-lite (runc): parent repository commit 82751995d340
+- sysbox-fs (fs): ae223ae2a92d
+- sysbox-ipc (ipc): 42e0682f99f3
+- sysbox-libs (libs): 1a22225794d3
+- sysbox-admission (admission): parent repository commit 82751995d340
+- sysbox-snapshotter (snapshotter): parent repository commit 82751995d340
+- charts and deploy: parent repository commit 82751995d340; deploy files
+  originated in the sysbox-pkgr submodule at 0ccb1fa3cce4
+
+Original license files remain in copied component directories. The runtime
+contains code derived from the Open Container Initiative runc project. The
+embedded fs/bazil module retains its own license. See each component's
+LICENSE file and source headers for applicable terms.

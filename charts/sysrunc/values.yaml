@@ -1,0 +1,32 @@
+nodeSelector: {}
+imagePullSecrets: []
+
+# auto detects CKM's child panel agent; explicit host/nested overrides detection.
+installMode: auto
+
+runtimeClassName: sysrunc
+# Enable after the old chart relinquishes ownership of its RuntimeClasses.
+compatRuntimeClasses: false
+
+installer:
+  enabled: true
+  image:
+    repository: ghcr.io/w7panel/sysrunc-deploy-k3s
+    tag: ""
+    pullPolicy: Always
+  podLabels: {}
+  podAnnotations: {}
+
+admission:
+  enabled: false
+  image:
+    repository: ""
+    tag: ""
+    pullPolicy: ""
+  replicas: 1
+  containerdConfigPath: /var/lib/rancher/k3s/agent/etc/containerd
+  podLabels: {}
+  podAnnotations: {}
+
+snapshotter:
+  enabled: false

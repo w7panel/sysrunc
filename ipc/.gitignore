@@ -1,0 +1,8 @@
+# Test binary, build with `go test -c`
+*.test
+
+# Ignore virtual-studio-code metadata
+.vscode
+
+# The generated FS protocol is checked in with its source so a fresh clone
+# builds without running protoc.

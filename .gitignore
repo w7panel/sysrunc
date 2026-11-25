@@ -1,0 +1,9 @@
+/dist/
+/bin/
+/fs/build/
+/admission/build/
+/snapshotter/build/
+/.gocache/
+/.gomodcache/
+/.tmp/
+*.log

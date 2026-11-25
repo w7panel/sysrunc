@@ -1,0 +1,245 @@
+package admission
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"path/filepath"
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+)
+
+const (
+	AnnotationRootfsRwLayer = "sysrunc.io/rootfs-rw-layer"
+	LegacyRootfsRwLayer     = "sysbox/rootfs-rw-layer"
+	AnnotationFS            = "sysrunc.io/fs"
+	AnnotationTicker        = "sysrunc.io/ticker"
+	RuntimeClassSysrunc     = "sysrunc"
+	RuntimeClassSysboxRunc  = "sysbox-runc"
+	RuntimeClassRuncLite    = "sysbox-runc-lite"
+)
+
+type Config struct {
+	SandboxImage string
+}
+
+type Mutator struct {
+	sandboxImage string
+}
+
+type RootfsRwLayerEntry struct {
+	Name                    string   `json:"name"`
+	VolumeName              string   `json:"volumeName"`
+	Path                    string   `json:"path"`
+	PersistentSpecialMounts bool     `json:"persistentSpecialMounts,omitempty"`
+	SpecialPath             []string `json:"specialPath,omitempty"`
+}
+
+func NewMutator(config Config) *Mutator {
+	return &Mutator{sandboxImage: config.SandboxImage}
+}
+
+func (m *Mutator) Mutate(ctx context.Context, pod *corev1.Pod) (*corev1.Pod, error) {
+	mutated := pod.DeepCopy()
+	_, enabled, err := m.mutatePod(ctx, mutated)
+	if err != nil || !enabled {
+		return mutated, err
+	}
+	return mutated, nil
+}
+
+func (m *Mutator) mutatePod(ctx context.Context, pod *corev1.Pod) ([]RootfsRwLayerEntry, bool, error) {
+	spec := &pod.Spec
+	newRootfs := strings.TrimSpace(pod.Annotations[AnnotationRootfsRwLayer])
+	legacyRootfs := strings.TrimSpace(pod.Annotations[LegacyRootfsRwLayer])
+	if (newRootfs != "" && newRootfs != "false") || (legacyRootfs != "" && legacyRootfs != "false") {
+		if spec.RuntimeClassName == nil || !isManagedRuntime(*spec.RuntimeClassName) {
+			return nil, false, fmt.Errorf("rootfs rw-layer annotation requires a sysrunc RuntimeClass")
+		}
+	}
+	if spec.RuntimeClassName == nil || !isManagedRuntime(*spec.RuntimeClassName) {
+		return nil, false, nil
+	}
+	fs := *spec.RuntimeClassName == RuntimeClassSysboxRunc
+	if raw, ok := pod.Annotations[AnnotationFS]; ok {
+		if raw != "true" && raw != "false" {
+			return nil, false, fmt.Errorf("%s must be true or false", AnnotationFS)
+		}
+		fs = raw == "true"
+	}
+	if raw, ok := pod.Annotations[AnnotationTicker]; ok {
+		if raw != "true" && raw != "false" {
+			return nil, false, fmt.Errorf("%s must be true or false", AnnotationTicker)
+		}
+		if raw == "true" && !fs {
+			return nil, false, fmt.Errorf("%s requires %s=true", AnnotationTicker, AnnotationFS)
+		}
+	}
+	if fs && *spec.RuntimeClassName == RuntimeClassSysboxRunc {
+		if spec.HostUsers != nil && *spec.HostUsers {
+			return nil, false, fmt.Errorf("FS-enabled sysrunc pods require hostUsers: false")
+		}
+		userNamespaces := false
+		spec.HostUsers = &userNamespaces
+	}
+	// PVC initialization is inferred by the runtime from trusted kubelet CSI
+	// mount paths. Do not expose or forward the former internal annotation.
+	delete(pod.Annotations, "sysbox/volume-init")
+	entries, enabled, err := parseRootfsAnnotation(pod.Annotations, spec)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if enabled {
+		if err := ensureSidecar(spec, entries, m.sandboxImage); err != nil {
+			return nil, false, err
+		}
+	}
+	return entries, true, nil
+}
+
+func isManagedRuntime(name string) bool {
+	return name == RuntimeClassSysrunc || name == RuntimeClassSysboxRunc || name == RuntimeClassRuncLite
+}
+
+func parseRootfsAnnotation(annotations map[string]string, spec *corev1.PodSpec) ([]RootfsRwLayerEntry, bool, error) {
+	raw, configured := annotations[AnnotationRootfsRwLayer]
+	if legacy, ok := annotations[LegacyRootfsRwLayer]; ok {
+		if configured && legacy != raw {
+			return nil, false, fmt.Errorf("conflicting rootfs rw-layer annotations")
+		}
+		if !configured {
+			raw, configured = legacy, true
+		}
+	}
+	if !configured {
+		return nil, false, nil
+	}
+	if strings.TrimSpace(raw) == "" || strings.TrimSpace(raw) == "false" {
+		return nil, false, nil
+	}
+	var entries []RootfsRwLayerEntry
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&entries); err != nil {
+		return nil, false, fmt.Errorf("invalid %s annotation: %w", AnnotationRootfsRwLayer, err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, false, fmt.Errorf("invalid %s annotation: trailing JSON data", AnnotationRootfsRwLayer)
+	}
+	if len(entries) == 0 {
+		return nil, false, fmt.Errorf("%s annotation must not be empty", AnnotationRootfsRwLayer)
+	}
+	seen := map[string]struct{}{}
+	for _, entry := range entries {
+		if entry.Name == "" {
+			return nil, false, fmt.Errorf("rootfs rw-layer entry name is required")
+		}
+		if _, exists := seen[entry.Name]; exists {
+			return nil, false, fmt.Errorf("container %s configured more than once", entry.Name)
+		}
+		seen[entry.Name] = struct{}{}
+		if err := validateEntry(spec, entry); err != nil {
+			return nil, false, err
+		}
+	}
+	return entries, true, nil
+}
+
+func validateEntry(spec *corev1.PodSpec, entry RootfsRwLayerEntry) error {
+	if entry.VolumeName == "" {
+		return fmt.Errorf("container %s volumeName is required", entry.Name)
+	}
+	if _, found := findContainer(spec, entry.Name); !found {
+		return fmt.Errorf("container %s not found in pod spec", entry.Name)
+	}
+	if _, claimName, found := findPVCVolume(spec, entry.VolumeName); !found {
+		return fmt.Errorf("volume %s must be a persistentVolumeClaim volume", entry.VolumeName)
+	} else if claimName == "" {
+		return fmt.Errorf("volume %s pvc claim name is empty", entry.VolumeName)
+	}
+	if err := validateRelativePath(entry.Path); err != nil {
+		return fmt.Errorf("container %s path invalid: %w", entry.Name, err)
+	}
+	if len(entry.SpecialPath) > 0 && !entry.PersistentSpecialMounts {
+		return fmt.Errorf("container %s specialPath requires persistentSpecialMounts", entry.Name)
+	}
+	paths := append([]string(nil), builtinSpecialPaths...)
+	for _, path := range entry.SpecialPath {
+		cleaned, err := validateSpecialPath(path)
+		if err != nil {
+			return fmt.Errorf("container %s specialPath %q invalid: %w", entry.Name, path, err)
+		}
+		for _, existing := range paths {
+			if pathsOverlap(cleaned, existing) {
+				return fmt.Errorf("container %s specialPath %q overlaps %q", entry.Name, path, existing)
+			}
+		}
+		paths = append(paths, cleaned)
+	}
+	return nil
+}
+
+var builtinSpecialPaths = []string{
+	"/var/lib/docker",
+	"/var/lib/kubelet",
+	"/var/lib/k0s",
+	"/var/lib/rancher/k3s",
+	"/var/lib/rancher/rke2",
+	"/var/lib/buildkit",
+	"/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs",
+}
+
+func validateSpecialPath(path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("path must be absolute")
+	}
+	cleaned := filepath.Clean(path)
+	if cleaned == string(filepath.Separator) {
+		return "", fmt.Errorf("path must not be root")
+	}
+	return cleaned, nil
+}
+
+func pathsOverlap(left, right string) bool {
+	return left == right || strings.HasPrefix(left, right+string(filepath.Separator)) || strings.HasPrefix(right, left+string(filepath.Separator))
+}
+
+func findContainer(spec *corev1.PodSpec, name string) (int, bool) {
+	for index, container := range spec.Containers {
+		if container.Name == name {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func findPVCVolume(spec *corev1.PodSpec, volumeName string) (int, string, bool) {
+	for index, volume := range spec.Volumes {
+		if volume.Name == volumeName && volume.PersistentVolumeClaim != nil {
+			return index, volume.PersistentVolumeClaim.ClaimName, true
+		}
+	}
+	return 0, "", false
+}
+
+func validateRelativePath(path string) error {
+	if path == "" {
+		return nil
+	}
+	if filepath.IsAbs(path) {
+		return fmt.Errorf("path must be relative")
+	}
+	cleaned := filepath.Clean(path)
+	if cleaned == "." {
+		return nil
+	}
+	if cleaned == ".." || len(cleaned) >= 3 && cleaned[:3] == "../" {
+		return fmt.Errorf("path must not escape volume root")
+	}
+	return nil
+}

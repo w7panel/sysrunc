@@ -1,0 +1,121 @@
+#
+# Copyright 2019-2023 Nestybox, Inc.
+#
+
+#
+# Docker image for deploying Sysrunc-CE on a K3s host.
+#
+# Build with:
+#
+# docker build -t ghcr.io/nestybox/sysrunc-deploy-k3s .
+# China mirror alternative:
+# docker build --build-arg BASE_IMAGE=docker.cnb.cool/i0358/docker-images-chrom/centos-centos:stream9 -t docker.cnb.cool/i0358/docker-images-chrom/sysrunc-deploy-k3s .
+#
+
+# Note: we use a centos base image because it carries a systemctl that can
+# communicate with the host's systemd via dbus. This does not work when using a
+# ubuntu + systemd image (systemctl can't not connect to the host's dbus, even
+# though the host's dbus socket was mounted into the container).
+
+ARG BASE_IMAGE=docker.cnb.cool/i0358/docker-images-chrom/centos-centos:stream9
+ARG FUSE3_VERSION=3.17.2
+ARG FUSE_OVERLAYFS_VERSION=1.17
+ARG GITHUB_PROXY="https://gh-proxy.org/"
+ARG ALPINE_MIRROR="https://mirrors.tuna.tsinghua.edu.cn/alpine"
+FROM alpine:3.20 AS fuse-helper
+ARG FUSE3_VERSION
+ARG FUSE_OVERLAYFS_VERSION
+ARG GITHUB_PROXY
+ARG ALPINE_MIRROR
+RUN printf '%s/v3.20/main\n%s/v3.20/community\n' "$ALPINE_MIRROR" "$ALPINE_MIRROR" > /etc/apk/repositories \
+    && apk add --no-cache build-base curl meson ninja linux-headers pkgconf autoconf automake libtool \
+    && curl -fL "${GITHUB_PROXY}https://github.com/libfuse/libfuse/archive/refs/tags/fuse-${FUSE3_VERSION}.tar.gz" -o /tmp/libfuse.tar.gz \
+    && mkdir /tmp/libfuse-src \
+    && tar -xzf /tmp/libfuse.tar.gz -C /tmp/libfuse-src --strip-components=1 \
+    && meson setup /tmp/libfuse-build /tmp/libfuse-src --prefix=/usr/local -Ddefault_library=static -Dexamples=false -Dtests=false -Dc_link_args=-static \
+    && meson compile -C /tmp/libfuse-build \
+    && meson install -C /tmp/libfuse-build \
+    && curl -fL "${GITHUB_PROXY}https://github.com/containers/fuse-overlayfs/archive/refs/tags/v${FUSE_OVERLAYFS_VERSION}.tar.gz" -o /tmp/fuse-overlayfs.tar.gz \
+    && mkdir /tmp/fuse-overlayfs-src \
+    && tar -xzf /tmp/fuse-overlayfs.tar.gz -C /tmp/fuse-overlayfs-src --strip-components=1 \
+    && cd /tmp/fuse-overlayfs-src \
+    && ./autogen.sh \
+    && LIBS=-ldl LDFLAGS=-static ./configure --prefix=/usr/local \
+    && make -j2 \
+    && ! readelf -l /tmp/libfuse-build/util/fusermount3 | grep -q INTERP \
+    && ! readelf -l /tmp/fuse-overlayfs-src/fuse-overlayfs | grep -q INTERP
+
+FROM ${BASE_IMAGE}
+
+ARG sys_arch
+ENV SYS_ARCH=${sys_arch}
+ARG sysrunc_version
+ENV SYSRUNC_VERSION=${sysrunc_version}
+
+ARG DEST=/opt/sysrunc
+ARG KUBECTL_VERSION="1.32.13"
+ARG KUBECTL_RPM_RELEASE="150500.1.1"
+ARG KUBECTL_RPM_MIRROR="https://mirrors.aliyun.com/kubernetes-new/core/stable"
+ARG CRICTL_VERSION="v1.35.0"
+ARG GITHUB_PROXY="https://gh-proxy.org/"
+ARG CENTOS_MIRROR="https://mirrors.aliyun.com/centos-stream"
+
+RUN centos_arch="$(rpm -E '%{_arch}')" \
+    && dnf --setopt=baseos.metalink= \
+        --setopt="baseos.baseurl=${CENTOS_MIRROR}/9-stream/BaseOS/${centos_arch}/os/" \
+        --setopt=appstream.metalink= \
+        --setopt="appstream.baseurl=${CENTOS_MIRROR}/9-stream/AppStream/${centos_arch}/os/" \
+        install -y --allowerasing systemd curl wget bc which jq procps-ng rsync fuse3 fuse-overlayfs util-linux \
+    && dnf clean all
+
+RUN case "${SYS_ARCH}" in \
+        amd64) kubectl_rpm_arch=x86_64 ;; \
+        arm64) kubectl_rpm_arch=aarch64 ;; \
+        *) echo "unsupported kubectl arch: ${SYS_ARCH}" && exit 1 ;; \
+    esac \
+    && kubectl_minor="${KUBECTL_VERSION%.*}" \
+    && curl -fL --retry 3 --connect-timeout 10 --max-time 120 \
+        "${KUBECTL_RPM_MIRROR}/v${kubectl_minor}/rpm/${kubectl_rpm_arch}/kubectl-${KUBECTL_VERSION}-${KUBECTL_RPM_RELEASE}.${kubectl_rpm_arch}.rpm" \
+        -o /tmp/kubectl.rpm \
+    && rpm -i /tmp/kubectl.rpm \
+    && rm -f /tmp/kubectl.rpm
+
+RUN wget "${GITHUB_PROXY}https://github.com/TomWright/dasel/releases/download/v1.27.3/dasel_linux_${SYS_ARCH}" \
+    && mv dasel_linux_${SYS_ARCH} dasel && chmod +x dasel && mv ./dasel /usr/local/bin/dasel
+
+# crictl will be copied to the host, and used by the runtime installation agents.
+RUN wget "${GITHUB_PROXY}https://github.com/kubernetes-sigs/cri-tools/releases/download/${CRICTL_VERSION}/crictl-${CRICTL_VERSION}-linux-${SYS_ARCH}.tar.gz" \
+    && tar zxvf crictl-${CRICTL_VERSION}-linux-${SYS_ARCH}.tar.gz -C /usr/local/bin \
+    && chmod +x /usr/local/bin/crictl \
+    && rm -f crictl-${CRICTL_VERSION}-linux-${SYS_ARCH}.tar.gz
+
+#
+# Load Sysrunc installation artifacts
+#
+
+COPY dist/bin/generic /opt/sysrunc/bin/generic
+
+# The inner K3s launcher invokes rsync through the bundled Sysrunc tool path.
+# fuse-overlayfs backs the mount.fuse3 shim that stands in for the generic
+# mount helper missing from minimal K3s images; without it the launcher fails
+# its dependency check on every pass.
+RUN cp -a /usr/bin/rsync /opt/sysrunc/bin/generic/rsync
+# The inner K3s rootfs has no glibc loader. Both helpers must be static so
+# they remain executable after the installer container exits.
+COPY --from=fuse-helper /tmp/libfuse-build/util/fusermount3 /opt/sysrunc/bin/generic/fusermount3
+COPY --from=fuse-helper /tmp/fuse-overlayfs-src/fuse-overlayfs /opt/sysrunc/bin/generic/fuse-overlayfs
+
+RUN ln -s /opt/sysrunc/bin/generic/sysrunc-admission /usr/local/bin/sysrunc-admission
+
+COPY deploy/systemd/50-sysrunc-mod.conf /opt/sysrunc/systemd/50-sysrunc-mod.conf
+COPY deploy/systemd/99-sysrunc-sysctl.conf /opt/sysrunc/systemd/99-sysrunc-sysctl.conf
+COPY deploy/systemd/sysrunc-installer-helper.service /opt/sysrunc/systemd/sysrunc-installer-helper.service
+COPY deploy/systemd/sysrunc-fs.service /opt/sysrunc/systemd/sysrunc-fs.service
+COPY deploy/systemd/sysrunc-snapshotter.service /opt/sysrunc/systemd/sysrunc-snapshotter.service
+COPY deploy/systemd/sysrunc.service /opt/sysrunc/systemd/sysrunc.service
+
+COPY deploy/scripts/sysrunc-deploy-k8s.sh /opt/sysrunc/scripts/sysrunc-deploy-k8s.sh
+COPY deploy/scripts/sysrunc-installer.sh /opt/sysrunc/scripts/sysrunc-installer.sh
+COPY deploy/scripts/sysrunc-inner-k3s.sh /opt/sysrunc/scripts/sysrunc-inner-k3s.sh
+COPY deploy/scripts/sysrunc-inner-agent.sh /opt/sysrunc/scripts/sysrunc-inner-agent.sh
+COPY deploy/scripts/sysrunc-installer-helper.sh /opt/sysrunc/scripts/sysrunc-installer-helper.sh

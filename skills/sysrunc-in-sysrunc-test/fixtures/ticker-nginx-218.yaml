@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sysrunc-l2-ticker-1124
+  namespace: default
+  annotations:
+    sysrunc.io/fs: "true"
+    sysrunc.io/ticker: "true"
+spec:
+  runtimeClassName: sysrunc
+  restartPolicy: Never
+  containers:
+    - name: nginx
+      image: ccr.ccs.tencentyun.com/afan-public/nginx:latest
+      imagePullPolicy: IfNotPresent
