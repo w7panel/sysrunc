@@ -27,7 +27,16 @@ var procVirtualFiles = map[string]bool{
 	"/proc/swaps":  true,
 	"/proc/uptime": true, "/proc/loadavg": true,
 	"/proc/pressure/cpu": true, "/proc/pressure/io": true,
-	"/proc/pressure/memory": true,
+	"/proc/pressure/memory":           true,
+	"/sys/devices/system/cpu/online":  true,
+	"/sys/devices/system/cpu/present": true,
+}
+
+// These files are virtual entries of the /proc/sys/kernel directory handler.
+// Its per-container cache must supply the snapshot, rather than a host read.
+var procKernelReadOnlyFiles = map[string]bool{
+	"/proc/sys/kernel/cap_last_cap": true,
+	"/proc/sys/kernel/ngroups_max":  true,
 }
 
 // These UTS files are read-only and have the same contents in every namespace.
@@ -93,7 +102,7 @@ func (t *syscallTracer) procFastPath(req *sysRequest, path string) string {
 	if path == "" || path == "." || path == ".." || strings.Contains(path, "/") {
 		return path
 	}
-	if path != "uuid" && !procVirtualFiles["/proc/"+path] && !procVirtualFiles["/proc/pressure/"+path] && !procHostUTSFiles["/proc/sys/kernel/"+path] {
+	if path != "uuid" && !procVirtualFiles["/proc/"+path] && !procVirtualFiles["/proc/pressure/"+path] && !procVirtualFiles["/sys/devices/system/cpu/"+path] && !procKernelReadOnlyFiles["/proc/sys/kernel/"+path] && !procHostUTSFiles["/proc/sys/kernel/"+path] {
 		return path
 	}
 	process := t.service.prs.ProcessCreate(req.Pid, 0, 0)
@@ -118,7 +127,13 @@ func (t *syscallTracer) procFastPath(req *sysRequest, path string) string {
 	if parent == "/proc/pressure" && procVirtualFiles[parent+"/"+path] {
 		return parent + "/" + path
 	}
+	if parent == "/sys/devices/system/cpu" && procVirtualFiles[parent+"/"+path] {
+		return parent + "/" + path
+	}
 	if parent == "/proc/sys/kernel" && procHostUTSFiles[parent+"/"+path] {
+		return parent + "/" + path
+	}
+	if parent == "/proc/sys/kernel" && procKernelReadOnlyFiles[parent+"/"+path] {
 		return parent + "/" + path
 	}
 	return path
@@ -147,10 +162,18 @@ func (t *syscallTracer) tryProcHostUTSOpen(req *sysRequest, notifyFD int32, cntr
 
 func (t *syscallTracer) procVirtualHandler(path string) (domain.HandlerIface, bool) {
 	service := t.service.procHandlers
-	if service == nil || !procVirtualFiles[path] {
+	if service == nil || (!procVirtualFiles[path] && !procKernelReadOnlyFiles[path]) {
 		return nil, false
 	}
-	handler, ok := service.FindHandler(path)
+	var handler domain.HandlerIface
+	var ok bool
+	if procKernelReadOnlyFiles[path] {
+		node := service.IOService().NewIOnode(filepath.Base(path), path, os.FileMode(0444))
+		handler, ok = service.LookupHandler(node)
+		ok = ok && handler.GetPath() == "/proc/sys/kernel"
+	} else {
+		handler, ok = service.FindHandler(path)
+	}
 	return handler, ok && handler.GetEnabled()
 }
 
@@ -170,6 +193,10 @@ func (t *syscallTracer) readVirtualProc(cntr domain.ContainerIface, pid uint32, 
 	if _, err := handler.Open(node, req); err != nil {
 		return nil, err
 	}
+	return readProcHandlerSnapshot(handler, node, req)
+}
+
+func readProcHandlerSnapshot(handler domain.HandlerIface, node domain.IOnodeIface, req *domain.HandlerRequest) ([]byte, error) {
 	const chunkSize = 64 << 10
 	const maxSize = 16 << 20
 	data := make([]byte, 0, 4096)
@@ -181,10 +208,12 @@ func (t *syscallTracer) readVirtualProc(cntr domain.ContainerIface, pid uint32, 
 		if err != nil && err != io.EOF {
 			return nil, err
 		}
-		if n < 0 || n > len(buffer) {
+		if n < 0 || n > len(req.Data) {
 			return nil, fmt.Errorf("invalid proc read size %d", n)
 		}
-		data = append(data, buffer[:n]...)
+		// Container-cached handlers may replace req.Data with the cached
+		// slice instead of copying into the supplied buffer.
+		data = append(data, req.Data[:n]...)
 		if n == 0 || err == io.EOF {
 			return data, nil
 		}
@@ -321,8 +350,11 @@ func (t *syscallTracer) processStatx(req *sysRequest, notifyFD int32, cntr domai
 	if target == procUUIDPath {
 		stat.Size = 1024
 		stat.Mode = (stat.Mode & unix.S_IFMT) | 0444
-	} else if procVirtualFiles[target] {
+	} else if procVirtualFiles[target] || procKernelReadOnlyFiles[target] {
 		stat.Size = 4096
+		if procKernelReadOnlyFiles[target] {
+			stat.Size = 1024
+		}
 		stat.Mode = (stat.Mode & unix.S_IFMT) | 0444
 	}
 	if err := libseccomp.NotifIDValid(libseccomp.ScmpFd(notifyFD), req.ID); err != nil {

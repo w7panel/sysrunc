@@ -98,11 +98,12 @@ created.
   the local handler. Writable proc sysctls and most FUSE handling
   remain in the manager. The FUSE worker handles repair requests, while normal FUSE
   requests remain in the manager.
-- The existing container-aware `/proc/pressure/{cpu,io,memory}` handlers now
-  have exact-path, plain-read seccomp notify fast paths in source. They use
-  read-only memfd snapshots; masked paths and unsupported flags still fall
-  back to FUSE. This addition has passed local tests and build, but has not
-  yet been deployed to 218.
+- The existing container-aware `/proc/pressure/{cpu,io,memory}` and
+  `/sys/devices/system/cpu/{online,present}` handlers, plus the two read-only
+  `/proc/sys/kernel/{cap_last_cap,ngroups_max}` entries, now have exact-path,
+  plain-read seccomp notify fast paths. They use read-only memfd snapshots;
+  masked paths and unsupported flags retain their original kernel or FUSE
+  handling. A local image passed 218 L2 repeated-read and fallback probes.
 - `openat`/`openat2` and `statx` are intercepted for selected proc resources.
   `getdents64` is served directly for the exact `/proc/sys/kernel/random`
   directory while the original FUSE fd remains in the tracee. Other
@@ -155,8 +156,9 @@ entering FUSE. Other flags and paths retain the FUSE fallback. In a nested user
 namespace, the host's `/proc/slabinfo` cannot be read; it remains on the FUSE
 path and reports `EACCES` instead of an opaque I/O error.
 
-Other paths and unsupported flags continue to the kernel and retain FUSE
-behavior. Masked proc paths, invalid `openat2` modes or structure sizes, and
+Other paths and unsupported flags continue to the kernel and retain their
+original FUSE behavior where mounted. Masked proc and sys paths, invalid
+`openat2` modes or structure sizes, and
 injection failures also fall back. Read-path notifications are installed only
 where they preserve the OCI seccomp profile's existing allow rules. The
 remaining mounted proc resources, especially writable `/proc/sys` files and

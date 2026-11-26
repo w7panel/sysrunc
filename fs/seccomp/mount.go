@@ -22,9 +22,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/sirupsen/logrus"
 	"github.com/w7panel/sysrunc/fs/domain"
 	"github.com/w7panel/sysrunc/fs/fuse"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
 
@@ -290,6 +290,11 @@ func (m *mountSyscallInfo) createProcPayload(
 	// Container-specific masked paths.
 	procMaskPaths := m.cntr.ProcMaskPaths()
 	for _, v := range procMaskPaths {
+		// Sysfs masks are carried for seccomp checks, but this payload only
+		// recreates masks within a newly mounted proc filesystem.
+		if v != "/proc" && !strings.HasPrefix(v, "/proc/") {
+			continue
+		}
 		if !domain.FileExists(v) {
 			continue
 		}

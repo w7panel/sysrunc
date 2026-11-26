@@ -135,7 +135,10 @@ func Register(id string, pid int, startTime uint64, hostname string, uid, gid, s
 		}
 	}
 	for _, path := range masked {
-		if strings.HasPrefix(path, "/proc") {
+		// The same field also carries sysfs masks so the seccomp read fast
+		// path cannot expose a file hidden by the OCI maskedPaths policy.
+		if path == "/proc" || strings.HasPrefix(path, "/proc/") ||
+			path == "/sys" || strings.HasPrefix(path, "/sys/") {
 			data.ProcMaskPaths = append(data.ProcMaskPaths, path)
 		}
 	}

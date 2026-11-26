@@ -1268,3 +1268,33 @@ FS 或 L0 新运行时验收。
   经 port-forward 访问均返回 HTTP 200。测试 PVC 保留。
 - 本次验证的是 **L0 Longhorn CSI**；专用 CKM 内层 L1 仍只有
   `local-path` StorageClass，不能据此视为 L1 CSI 验收。未进行吞吐量化。
+
+## 2026-11-26 FS 虚拟文件只读快路径源码集成
+
+- 在三个 `/proc/pressure/{cpu,io,memory}`、两个
+  `/sys/devices/system/cpu/{online,present}` 和两个
+  `/proc/sys/kernel/{cap_last_cap,ngroups_max}` 精确路径上复用容器视角
+  处理器，通过 seccomp notify 返回只读 memfd。普通只读打开才命中；
+  `O_NONBLOCK` 等其他方式仍走原路径。OCI sysfs maskedPaths 也传给
+  seccomp 判定，但新建 masked Pod 的端到端负例尚未运行。
+- 完整 Dockerfile 构建在 Docker Hub 获取 `alpine:3.20` 元数据时超时，
+  沙箱内外重试一致。本轮改用本地已有的已发布 `v0.1.2` 镜像作为测试基底，
+  仅替换本地构建的 Sysrunc 和 FS 二进制；镜像
+  `sysrunc-it:218-20261126-fs-virtual-fix2` ID 为
+  `sha256:27726bbae6182f3051986fbcd3377a440313cbaaa4bb843a3a72f68470f42463`。
+  此镜像只导入专用 CKM 的 L1 containerd，未推送 CCR 或发布 Chart。
+- L1 `default/w7panel-sysrunc` revision 8 `deployed`，agent 与 admission
+  Ready。运行中 runc 和 FS SHA256 分别为
+  `0606172f091ce0cf3dc45a60a436d9e3f40cc18a4d73a3e1630bb5ff9585cd7d`
+  与 `4ec255515df8778342f0f32ef3e85cffb200fee5afc04f201a4bc56c0d872d9c`，
+  与本地构建相同。二进制更新触发 K3s 重启，两个 `restartPolicy: Never`
+  的旧 FS/普通测试 Pod 变为 Unknown；只按原清单重建这两个 Pod，PVC 未删。
+- 首版测试镜像暴露了已缓存的内核 sysctl 再读返回 NUL 的问题：旧直读循环
+  未使用处理器替换后的缓存切片。修复后七个路径均连续打开两次，FD
+  均为 `memfd:sysrunc-*`，内容正确；`cap_last_cap=40`、
+  `ngroups_max=65536`。三个代表路径带 `O_NONBLOCK` 打开时 FD 仍指向
+  原文件。FS 与普通 L2 Pod 的 `check-status.sh` 均通过，CRI sandbox
+  均为 `sysrunc/SANDBOX_READY`；四个 nginx Pod 可访问，已有 webroot、
+  `/srv/data`、rootfs 特殊目录标记和五个 `local-path` PVC 保留。
+- 本轮确认的是这七个精确只读路径的源码集成；其余虚拟目录、可写
+  `/proc/sys` 与 `/sys` 路径仍由 FUSE 处理，未完成全量绕过或吞吐量化。

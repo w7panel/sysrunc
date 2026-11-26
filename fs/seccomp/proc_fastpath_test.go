@@ -6,8 +6,27 @@ import (
 	"testing"
 
 	libseccomp "github.com/seccomp/libseccomp-golang"
+	"github.com/w7panel/sysrunc/fs/domain"
 	"golang.org/x/sys/unix"
 )
+
+type snapshotReplacingHandler struct {
+	domain.HandlerIface
+	data []byte
+}
+
+func (h snapshotReplacingHandler) Read(_ domain.IOnodeIface, req *domain.HandlerRequest) (int, error) {
+	req.Data = h.data
+	return len(h.data), io.EOF
+}
+
+func TestReadProcHandlerSnapshotUsesReplacedData(t *testing.T) {
+	handler := snapshotReplacingHandler{data: []byte("65536\n")}
+	data, err := readProcHandlerSnapshot(handler, nil, &domain.HandlerRequest{})
+	if err != nil || string(data) != "65536\n" {
+		t.Fatalf("snapshot = %q, %v; want cached handler data", data, err)
+	}
+}
 
 type literalProcPathParser string
 
@@ -133,6 +152,10 @@ func TestProcVirtualFileSelection(t *testing.T) {
 	if !procPathMasked("/proc/meminfo", []string{"/proc"}) ||
 		procPathMasked("/proc/meminfo", []string{"/proc/meminfo-extra"}) {
 		t.Fatal("proc mask path boundary is wrong")
+	}
+	if !procPathMasked("/sys/devices/system/cpu/online", []string{"/sys/devices/system/cpu"}) ||
+		procPathMasked("/sys/devices/system/cpu/online", []string{"/sys/devices/system/cpu/online-extra"}) {
+		t.Fatal("sysfs mask path boundary is wrong")
 	}
 }
 
