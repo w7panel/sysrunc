@@ -12,17 +12,15 @@
 # docker build --build-arg BASE_IMAGE=docker.cnb.cool/i0358/docker-images-chrom/centos-centos:stream9 -t docker.cnb.cool/i0358/docker-images-chrom/sysrunc-deploy-k3s .
 #
 
-# Note: we use a centos base image because it carries a systemctl that can
-# communicate with the host's systemd via dbus. This does not work when using a
-# ubuntu + systemd image (systemctl can't not connect to the host's dbus, even
-# though the host's dbus socket was mounted into the container).
+# The CentOS base provides the systemd tools used by the host installer.
 
 ARG BASE_IMAGE=docker.cnb.cool/i0358/docker-images-chrom/centos-centos:stream9
 ARG FUSE3_VERSION=3.17.2
 ARG FUSE_OVERLAYFS_VERSION=1.17
 ARG GITHUB_PROXY="https://gh-proxy.org/"
 ARG ALPINE_MIRROR="https://mirrors.tuna.tsinghua.edu.cn/alpine"
-FROM alpine:3.20 AS fuse-helper
+ARG ALPINE_BASE_IMAGE=docker.cnb.cool/i0358/docker-images-chrom/alpine:3.20
+FROM ${ALPINE_BASE_IMAGE} AS fuse-helper
 ARG FUSE3_VERSION
 ARG FUSE_OVERLAYFS_VERSION
 ARG GITHUB_PROXY
@@ -47,12 +45,13 @@ RUN printf '%s/v3.20/main\n%s/v3.20/community\n' "$ALPINE_MIRROR" "$ALPINE_MIRRO
 
 # K3s' minimal rootfs has no glibc loader. Build rsync with ACL and xattr
 # support as a static binary so empty PVC seeding works inside the CKM.
-FROM alpine:3.20 AS rsync-helper
-RUN apk add --no-cache build-base binutils curl popt-dev acl-dev zlib-dev
+FROM ${ALPINE_BASE_IMAGE} AS rsync-helper
+ARG ALPINE_MIRROR
+RUN printf '%s/v3.20/main\n%s/v3.20/community\n' "$ALPINE_MIRROR" "$ALPINE_MIRROR" > /etc/apk/repositories \
+    && apk add --no-cache build-base binutils curl popt-dev acl-dev zlib-dev
 RUN curl -fL --retry 3 --connect-timeout 5 --max-time 60 https://download.samba.org/pub/rsync/src/rsync-3.2.7.tar.gz -o /tmp/rsync.tar.gz \
     || curl -fL --retry 3 --connect-timeout 10 --max-time 120 https://gh-proxy.org/https://github.com/RsyncProject/rsync/archive/refs/tags/v3.2.7.tar.gz -o /tmp/rsync.tar.gz
-RUN printf '%s/v3.20/main\n%s/v3.20/community\n' https://mirrors.tuna.tsinghua.edu.cn/alpine https://mirrors.tuna.tsinghua.edu.cn/alpine > /etc/apk/repositories \
-    && apk add --no-cache autoconf automake acl-static
+RUN apk add --no-cache autoconf automake acl-static
 RUN test -s /tmp/rsync.tar.gz \
     && mkdir /tmp/rsync-src \
     && tar -xzf /tmp/rsync.tar.gz -C /tmp/rsync-src --strip-components=1 \

@@ -1301,3 +1301,32 @@ FS 或 L0 新运行时验收。
   `/proc/sys`。相应回归测试和 FS 全量 Go 测试通过。
 - 本轮确认的是这七个精确只读路径的源码集成；其余虚拟目录、可写
   `/proc/sys` 与 `/sys` 路径仍由 FUSE 处理，未完成全量绕过或吞吐量化。
+
+## 2026-11-26 installer 宿主挂载优化与 v0.1.3 发布
+
+- TAPD 需求 `1162789787001016345`：host installer 将宿主 `/` 一次挂载到
+  `/host`，部署脚本的宿主文件路径全部改用 `/host`，运行时配置仍写入宿主
+  绝对路径；nested agent 和卸载 Job 同样挂载 `/host`，另保留必需的
+  `/dev/fuse` 字符设备。删除原来的分散 hostPath 和 DBus 挂载。
+- `bash -n`、host coexistence Bats 8 项、`make test`、host/nested Helm lint
+  和模板渲染均通过。完整 Dockerfile 使用
+  `docker.cnb.cool/i0358/docker-images-chrom/alpine:3.20` 构建静态辅助工具，
+  发布 `ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc:v0.1.3`，digest
+  `sha256:cb138e0586a711fe29537a79c8bfd8e854c3f1cdab2c6560a70008d9b3b3abbb`。
+  `sysrunc-0.1.3.tgz` 发布到 ZPK 应用 `w7panel-sysrunc`，制品版本
+  `1.0.3`，Chart 包 SHA256 为
+  `6b5f5045e5a5152d7105484919dc2195d02c2f889208f0a4ae2b46470d66b46b`。
+  镜像同时包含上一节已提交的 FS 虚拟文件快路径修改。
+- 218 L0 `default/w7panel-sysrunc` revision 4、专用 CKM L1 同名 release
+  revision 10 均为 deployed；内外层 installer/agent、admission 均 Ready，
+  imageID 都匹配上述 CCR digest。实际 Pod 挂载：L0 installer 仅宿主 `/`
+  到 `/host`，L1 agent 为 `/` 到 `/host` 加 `/dev/fuse`。L0 宿主安装标记
+  为 `0.1.3-0`，宿主 sysrunc 与镜像二进制 SHA256 均为
+  `26fe0cbbf8fccb37c35044e65feeadd5369af5d3bfd5f52fbcf7f58fb0b80ef8`；
+  L1 release 中 sysrunc、FS 二进制 SHA256 与镜像一致。
+- 升级时 K3s 重启导致两个 `restartPolicy: Never` 的 FS/nginx 测试 Pod
+  变为 Unknown。按原清单仅重建这两个 Pod，未删除 PVC。两者状态脚本
+  均通过，CRI sandbox 均为 `sysrunc/SANDBOX_READY`；FS 虚拟文件可读，
+  FS/nginx/rootfs 三个 Pod 的 HTTP 均返回 200，webroot、`/srv/data` 和
+  rootfs 持久标记保留。L0 两个 `disk-default` Longhorn PVC 仍为 Bound；
+  本轮未重建对应测试 Pod。

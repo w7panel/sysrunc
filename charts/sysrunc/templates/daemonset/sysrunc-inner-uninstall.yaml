@@ -35,14 +35,14 @@ spec:
           securityContext:
             privileged: true
           volumeMounts:
-            - name: host-k3s-data
-              mountPath: /host/var/lib/rancher/k3s
+            - name: host
+              mountPath: /host
             - name: dev-fuse
               mountPath: /dev/fuse
       volumes:
-        - name: host-k3s-data
+        - name: host
           hostPath:
-            path: /var/lib/rancher/k3s
+            path: /
             type: Directory
         - name: dev-fuse
           hostPath:

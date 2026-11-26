@@ -9,6 +9,7 @@ CHART_PACKAGE := $(CHART_OUTPUT)/$(CHART_NAME)-$(CHART_VERSION).tgz
 VERSION ?= $(CHART_VERSION)
 IMAGE_REPO ?= ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc
 IMAGE_TAG ?= v$(VERSION)
+ALPINE_BASE_IMAGE ?= docker.cnb.cool/i0358/docker-images-chrom/alpine:3.20
 ZPK_NAME ?= w7panel-sysrunc
 ZPK_HOST ?= zpk.idc.w7.com
 ZPK_BIN ?= $(shell command -v zpk 2>/dev/null || printf '%s/dist/tools/zpk' "$(CURDIR)")
@@ -55,7 +56,7 @@ package-chart: chart
 	helm package $(CHART_DIR) --destination $(CHART_OUTPUT)
 
 build-image: build
-	docker build --platform linux/amd64 --build-arg sys_arch=amd64 --build-arg sysrunc_version=$(VERSION) -f deploy/Dockerfile.sysrunc-k3s -t $(IMAGE_REPO):$(IMAGE_TAG) .
+	docker build --platform linux/amd64 --build-arg sys_arch=amd64 --build-arg sysrunc_version=$(VERSION) --build-arg ALPINE_BASE_IMAGE=$(ALPINE_BASE_IMAGE) -f deploy/Dockerfile.sysrunc-k3s -t $(IMAGE_REPO):$(IMAGE_TAG) .
 	docker push $(IMAGE_REPO):$(IMAGE_TAG)
 
 push-zpk: ensure-zpk

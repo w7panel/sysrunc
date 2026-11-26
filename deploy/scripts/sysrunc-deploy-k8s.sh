@@ -19,7 +19,7 @@
 #
 # Script to install or remove Sysrunc (CE) and Sysrunc-EE on a Kubernetes node.
 # The script assumes it will run inside the sysrunc deploy daemonset container,
-# and that several host directories are mounted onto the container. The script
+# and that the host root is mounted at /host in the container. The script
 # requires full root privileges on the host (e.g., CAP_SYS_ADMIN + write access
 # to /proc) in order to install Sysrunc on it.
 #
@@ -47,20 +47,20 @@ SYSRUNC_ADMISSION_LEASE_NAME="${SYSRUNC_ADMISSION_LEASE_NAME:-sysrunc-admission-
 sysrunc_artifacts="/opt/sysrunc"
 crio_artifacts="/opt/crio-deploy"
 
-# The daemonset spec will set up these mounts.
-host_systemd="/mnt/host/lib/systemd/system"
-host_sysctl="/mnt/host/lib/sysctl.d"
-host_bin="/mnt/host/usr/bin"
-host_lib_mod="/mnt/host/usr/lib/modules-load.d"
-host_local_bin="/mnt/host/usr/local/bin"
-host_etc="/mnt/host/etc"
-host_os_release="/mnt/host/os-release"
+# The daemonset mounts the host root at /host.
+host_systemd="/host/lib/systemd/system"
+host_sysctl="/host/lib/sysctl.d"
+host_bin="/host/usr/bin"
+host_lib_mod="/host/usr/lib/modules-load.d"
+host_local_bin="/host/usr/local/bin"
+host_etc="/host/etc"
+host_os_release="/host/etc/os-release"
 host_crio_conf_file="${host_etc}/crio/crio.conf"
 host_crio_conf_file_backup="${host_crio_conf_file}.orig"
 host_containerd_conf_file="${host_etc}/containerd/config.toml"
 host_containerd_conf_file_backup="${host_containerd_conf_file}.orig"
-host_run="/mnt/host/run"
-host_var_lib="/mnt/host/var/lib"
+host_run="/host/run"
+host_var_lib="/host/var/lib"
 host_k3s_containerd_conf_dir="${host_var_lib}/rancher/k3s/agent/etc/containerd"
 host_k3s_containerd_conf_template="${host_k3s_containerd_conf_dir}/config-v3.toml.tmpl"
 host_k3s_containerd_conf_template_backup="${host_k3s_containerd_conf_template}.orig"
@@ -743,7 +743,7 @@ function config_crio_for_sysrunc() {
 		dasel put string -f "${host_crio_conf_file}" -p toml -m 'crio.storage_option.[]' "overlay.mountopt=metacopy=on"
 	fi
 
-	local runtime_path="${host_bin#/mnt/host}/sysrunc"
+	local runtime_path="${host_bin#/host}/sysrunc"
 	dasel put object -f "${host_crio_conf_file}" -p toml -t string -t string -t string "crio.runtime.runtimes.sysrunc" \
 		"runtime_path=${runtime_path}" "runtime_type=oci" "monitor_path=/usr/local/bin/crio-conmon"
 	dasel put string -f "${host_crio_conf_file}" -p toml "crio.runtime.runtimes.sysrunc.allowed_annotations.[0]" \
@@ -792,7 +792,7 @@ function config_containerd_for_sysrunc() {
 	if [ ! -f "${host_containerd_conf_file_backup}" ]; then
 		cp "${host_containerd_conf_file}" "${host_containerd_conf_file_backup}"
 	fi
-	config_containerd_runtime "sysrunc" "${host_bin#/mnt/host}/sysrunc"
+	config_containerd_runtime "sysrunc" "${host_bin#/host}/sysrunc"
 	if [[ "${sysrunc_snapshotter_enabled}" == "true" ]]; then
 		dasel put string -f "${host_containerd_conf_file}" -p toml -s "proxy_plugins.sysrunc.type" -v "snapshot"
 		dasel put string -f "${host_containerd_conf_file}" -p toml -s "proxy_plugins.sysrunc.address" -v "/run/sysrunc-snapshotter.sock"
@@ -894,7 +894,7 @@ ${snapshotter_config}
 
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysrunc.options]
   SystemdCgroup = true
-  BinaryName = "${host_bin#/mnt/host}/sysrunc"
+  BinaryName = "${host_bin#/host}/sysrunc"
 
 [plugins.'io.containerd.cri.v1.images'.registry]
   config_path = "/var/lib/rancher/k3s/agent/etc/containerd/certs.d"
@@ -936,7 +936,7 @@ ${snapshotter_config}
 
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysrunc.options]
   SystemdCgroup = true
-  BinaryName = "${host_bin#/mnt/host}/sysrunc"
+  BinaryName = "${host_bin#/host}/sysrunc"
 EOF
 	fi
 	if [[ "$config_before" != "$(sed '/^[[:space:]]*$/d' "${host_k3s_containerd_conf_template}" | sha256sum | cut -c1-64)" ]]; then
@@ -1430,11 +1430,11 @@ function do_distro_adjustments() {
 	fi
 
 	# Adjust global vars.
-	host_bin="/mnt/host/opt/bin"
-	host_local_bin="/mnt/host/opt/local/bin"
-	host_systemd="/mnt/host/etc/systemd/system"
-	host_sysctl="/mnt/host/opt/lib/sysctl.d"
-	host_lib_mod="/mnt/host/opt/lib/modules-load.d"
+	host_bin="/host/opt/bin"
+	host_local_bin="/host/opt/local/bin"
+	host_systemd="/host/etc/systemd/system"
+	host_sysctl="/host/opt/lib/sysctl.d"
+	host_lib_mod="/host/opt/lib/modules-load.d"
 
 	# Ensure that required folders are already present.
 	mkdir -p ${host_bin} ${host_local_bin} ${host_systemd} ${host_sysctl} ${host_lib_mod}
