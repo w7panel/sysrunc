@@ -52,8 +52,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/w7panel/sysrunc/fs/domain"
 	"github.com/sirupsen/logrus"
+	"github.com/w7panel/sysrunc/fs/domain"
 	"golang.org/x/sys/unix"
 )
 
@@ -71,6 +71,18 @@ type mountInfoParser struct {
 	inInfo       map[domain.Inode][]*domain.MountInfo // mountinfo, indexed by mountpoint inode
 	fsIdInfo     map[string][]*domain.MountInfo       // mountinfo, indexed by file-sys id (major/minor ver)
 	service      *MountService                        // backpointer to mount service
+}
+
+// The registration field also carries sysfs masks for the seccomp fast path.
+// Only proc masks may be matched against paths relative to a proc mount.
+func procOnlyMaskPaths(paths []string) []string {
+	var procPaths []string
+	for _, path := range paths {
+		if path == "/proc" || strings.HasPrefix(path, "/proc/") {
+			procPaths = append(procPaths, path)
+		}
+	}
+	return procPaths
 }
 
 // newMountInfoParser returns a new mountInfoParser object.
@@ -478,7 +490,7 @@ func (mi *mountInfoParser) isSysboxfsSubMountOf(info, baseInfo *domain.MountInfo
 	case "proc":
 		if isMountpointUnder(relMountpoint, mi.service.mh.procMounts) ||
 			isMountpointUnder(relMountpoint, mi.cntr.ProcRoPaths()) ||
-			isMountpointUnder(relMountpoint, mi.cntr.ProcMaskPaths()) {
+			isMountpointUnder(relMountpoint, procOnlyMaskPaths(mi.cntr.ProcMaskPaths())) {
 			return true
 		}
 	case "sysfs":
@@ -672,7 +684,7 @@ func (mi *mountInfoParser) IsSysboxfsMaskedSubmount(mountpoint string) bool {
 	relMp := strings.TrimPrefix(mountpoint, baseInfo.MountPoint)
 
 	if baseInfo.FsType == "proc" {
-		if isMountpointUnder(relMp, mi.cntr.ProcMaskPaths()) {
+		if isMountpointUnder(relMp, procOnlyMaskPaths(mi.cntr.ProcMaskPaths())) {
 			return true
 		}
 	}

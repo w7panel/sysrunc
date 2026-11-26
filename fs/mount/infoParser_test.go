@@ -23,6 +23,13 @@ import (
 	"github.com/w7panel/sysrunc/fs/domain"
 )
 
+func TestSysfsMaskDoesNotBecomeProcMask(t *testing.T) {
+	paths := procOnlyMaskPaths([]string{"/proc/kcore", "/sys", "/sys/devices/system/cpu/online", "/proc/sys"})
+	if !reflect.DeepEqual(paths, []string{"/proc/kcore", "/proc/sys"}) {
+		t.Fatalf("proc-only masks = %v", paths)
+	}
+}
+
 func TestMountOptionsParsing(t *testing.T) {
 	mi := &mountInfoParser{fetchOptions: true}
 	plain, err := mi.parseComponents("2 1 0:1 / /plain rw - tmpfs tmpfs rw")

@@ -1280,13 +1280,13 @@ FS 或 L0 新运行时验收。
 - 完整 Dockerfile 构建在 Docker Hub 获取 `alpine:3.20` 元数据时超时，
   沙箱内外重试一致。本轮改用本地已有的已发布 `v0.1.2` 镜像作为测试基底，
   仅替换本地构建的 Sysrunc 和 FS 二进制；镜像
-  `sysrunc-it:218-20261126-fs-virtual-fix2` ID 为
-  `sha256:27726bbae6182f3051986fbcd3377a440313cbaaa4bb843a3a72f68470f42463`。
+  `sysrunc-it:218-20261126-fs-virtual-fix3` ID 为
+  `sha256:1d9c01762ef0bd0aa01eed4fa1fa2ac5d541d30adc0ffd63ac0f61fd387d505f`。
   此镜像只导入专用 CKM 的 L1 containerd，未推送 CCR 或发布 Chart。
-- L1 `default/w7panel-sysrunc` revision 8 `deployed`，agent 与 admission
+- L1 `default/w7panel-sysrunc` revision 9 `deployed`，agent 与 admission
   Ready。运行中 runc 和 FS SHA256 分别为
-  `0606172f091ce0cf3dc45a60a436d9e3f40cc18a4d73a3e1630bb5ff9585cd7d`
-  与 `4ec255515df8778342f0f32ef3e85cffb200fee5afc04f201a4bc56c0d872d9c`，
+  `c5df740aca100127713e662d70721d68a95238110829aaf0e953e825a4d468dc`
+  与 `d702f540c917351374576af23254b6d01470d2d3f411b21d989898d9329dc8dd`，
   与本地构建相同。二进制更新触发 K3s 重启，两个 `restartPolicy: Never`
   的旧 FS/普通测试 Pod 变为 Unknown；只按原清单重建这两个 Pod，PVC 未删。
 - 首版测试镜像暴露了已缓存的内核 sysctl 再读返回 NUL 的问题：旧直读循环
@@ -1296,5 +1296,8 @@ FS 或 L0 新运行时验收。
   原文件。FS 与普通 L2 Pod 的 `check-status.sh` 均通过，CRI sandbox
   均为 `sysrunc/SANDBOX_READY`；四个 nginx Pod 可访问，已有 webroot、
   `/srv/data`、rootfs 特殊目录标记和五个 `local-path` PVC 保留。
+- 对 sysfs 掩码的复查发现，它不能直接参与 proc 挂载路径的相对匹配；
+  最终镜像将 proc 挂载解析限定为 `/proc` 掩码，避免把 `/sys` 误判成
+  `/proc/sys`。相应回归测试和 FS 全量 Go 测试通过。
 - 本轮确认的是这七个精确只读路径的源码集成；其余虚拟目录、可写
   `/proc/sys` 与 `/sys` 路径仍由 FUSE 处理，未完成全量绕过或吞吐量化。
