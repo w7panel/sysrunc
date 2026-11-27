@@ -2014,3 +2014,36 @@ FS 或 L0 新运行时验收。
 - 临时 Pod 仅配置旧 `sysbox/rootfs-rw-layer` 和 `sysbox/volume-init`
   注解，admission 未注入 sidecar，Pod Ready；现有 `sysrunc.io/rootfs-rw-layer`
   Pod 有 `sysrunc-rootfs` sidecar。临时 Pod 已删除。
+
+## 2026-11-27 移除 mgr 残留后的 218 发布测试
+
+- 源码提交 `a0112a3` 构建的测试镜像已推送至 CCR：
+  `ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc:218-20261127-a0112a3`，
+  digest `sha256:8fe90f9d2abcf6f2dcd564e9021e296450fa9f269b9d5aa7a3524f69e1b9a2cb`。
+  本地 Chart `sysrunc-0.1.3.tgz` SHA256 为
+  `fce676c2482c2792f117b82b59a0ab8a7c1db4ce5f390978404b3fc433ec203b`；
+  这轮部署使用仓库 Chart，未将同版本 Chart 重新发布到 ZPK。
+- 专用 CKM `k3k-console-164315/ckm-sysrunc-fresh-1125` 的 L1 Helm 升至
+  revision 56，L0 `default/w7panel-sysrunc` 升至 revision 22，均为
+  `deployed`。两层 installer、admission 四个运行容器的 imageID 均为上述
+  digest。L0 宿主和 L1 安装的 `sysrunc` SHA256 都是
+  `0a6e6f659d0bf41ee61626216061e6cf84ee75c1a0976b5baabd380d4288b279`；
+  FS 为 `951eab4f8d145ab39ad4e6925b84ba1a41cecae98232a02f8803721a4beb65ca`，
+  snapshotter 为 `1dc628e39a468df576064a58b4e9e0b60e05d5a225c44eb25c40eebe0b047140`。
+- L0 更新后 CKM Server `k3k-ckm-sysrunc-fresh-1125-server-7b6d8cdf4f-rjkd5`
+  恢复为 2/2 Ready，`hostUsers:false`。两只 `restartPolicy: Never` 测试 Pod
+  处于 `Unknown` 后仅重建这两只 Pod，保留所有 PVC。L2 普通 nginx、FS 和
+  rootfs Pod 均 Ready；普通 nginx 的 CRI sandbox 使用 `sysrunc`，HTTP 200，
+  webroot 和 `/srv/data` 标记保留且 `index.html`、`50x.html` 存在。rootfs
+  Pod HTTP 200，`/root/rootfs-marker-1125` 仍为 `rootfs-1125-persist`。
+  FS Pod 的 `/proc/sys` 来源为 `sysruncfs`，UUID、ostype、meminfo 可读。
+  `sysrunc-special-v012-1125` 的 `/usr/share/nginx/html` 仍是 PVC 上的
+  idmapped 挂载，`special-marker-v012` 保留。
+- 临时 Pod `sysrunc-rootfs-false-a0112a3` 和
+  `sysrunc-rootfs-empty-a0112a3` 分别使用 `false` 与空 rootfs 注解；
+  两者均 Ready，只有 nginx 容器，没有 rootfs sidecar 或 PVC 挂载。
+  它们作为命名测试资源保留，未删除 PVC。
+- L1 用同一 Chart 和镜像重施至 revision 57 后，CKM Server UID
+  `5803d086-5643-45e3-b637-86a2a615c82d`、K3s restartCount `1`、
+  installer/admission Pod UID 和三个主要 L2 Pod UID 均未变化。
+  内层只验证了 `local-path` PVC；CSI StorageClass 场景未运行。
