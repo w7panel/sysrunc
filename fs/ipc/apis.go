@@ -32,11 +32,22 @@ type ipcService struct {
 	prs        domain.ProcessServiceIface
 	ios        domain.IOServiceIface
 	workers    *worker.Supervisor
+	checkpoint func() error
 }
 
 // SetWorkers attaches the process supervisor without changing the public
 // IpcServiceIface used by existing service implementations and tests.
 func (ips *ipcService) SetWorkers(workers *worker.Supervisor) { ips.workers = workers }
+
+// SetCheckpoint persists completed registrations before their RPC succeeds.
+func (ips *ipcService) SetCheckpoint(checkpoint func() error) { ips.checkpoint = checkpoint }
+
+func (ips *ipcService) checkpointState() error {
+	if ips.checkpoint == nil {
+		return nil
+	}
+	return ips.checkpoint()
+}
 
 func NewIpcService() domain.IpcServiceIface {
 	return &ipcService{}
@@ -74,9 +85,17 @@ func (ips *ipcService) Init() error {
 func ContainerPreRegister(ctx interface{}, data *grpc.ContainerData) error {
 
 	ipcService := ctx.(*ipcService)
+	if ipcService.workers != nil {
+		if err := ipcService.workers.PreRegister(data.Id, data.Netns); err != nil {
+			return err
+		}
+	}
 
 	err := ipcService.css.ContainerPreRegister(data.Id, data.Netns)
 	if err != nil {
+		if ipcService.workers != nil {
+			ipcService.workers.AbortPreRegister(data.Id)
+		}
 		return err
 	}
 
@@ -113,9 +132,18 @@ func ContainerRegister(ctx interface{}, data *grpc.ContainerData) error {
 		return err
 	}
 	if ipcService.workers != nil {
-		if err := ipcService.workers.Register(worker.Container{ID: data.Id, PID: data.InitPid, Ticker: data.Ticker, Ctime: data.Ctime}); err != nil {
+		if err := ipcService.workers.Register(worker.Container{
+			ID: data.Id, PID: data.InitPid, Ticker: data.Ticker, Ctime: data.Ctime,
+			UID: uint32(data.UidFirst), UIDSize: uint32(data.UidSize),
+			GID: uint32(data.GidFirst), GIDSize: uint32(data.GidSize),
+			ProcRO: append([]string(nil), data.ProcRoPaths...), ProcMask: append([]string(nil), data.ProcMaskPaths...),
+			CgroupData: data.CgroupData, PidNS: data.Pidns, InitStartTime: data.InitStartTime,
+		}); err != nil {
 			return err
 		}
+	}
+	if err := ipcService.checkpointState(); err != nil {
+		return grpcStatus.Errorf(grpcCodes.Internal, "save FS recovery checkpoint: %v", err)
 	}
 
 	return nil
@@ -141,6 +169,9 @@ func ContainerUnregister(ctx interface{}, data *grpc.ContainerData) error {
 	}
 	if ipcService.workers != nil {
 		ipcService.workers.Unregister(data.Id)
+	}
+	if err := ipcService.checkpointState(); err != nil {
+		return grpcStatus.Errorf(grpcCodes.Internal, "save FS recovery checkpoint: %v", err)
 	}
 
 	return nil
@@ -168,6 +199,14 @@ func ContainerUpdate(ctx interface{}, data *grpc.ContainerData) error {
 	err := ipcService.css.ContainerUpdate(cntr)
 	if err != nil {
 		return err
+	}
+	if ipcService.workers != nil {
+		if err := ipcService.workers.UpdateCtime(data.Id, data.Ctime); err != nil {
+			return err
+		}
+	}
+	if err := ipcService.checkpointState(); err != nil {
+		return grpcStatus.Errorf(grpcCodes.Internal, "save FS recovery checkpoint: %v", err)
 	}
 
 	return nil

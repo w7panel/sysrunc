@@ -78,6 +78,8 @@ status() {
   in_node /bin/sh -ec '
 		test -S /run/sysrunc/sysfs.sock
 		awk '\''$4 == "00010000" && $8 == "/run/sysrunc/sysfs.sock" { found=1 } END { exit !found }'\'' /proc/net/unix
+		test -S /run/sysrunc/fd-broker.sock
+		awk '\''$4 == "00010000" && $8 == "/run/sysrunc/fd-broker.sock" { found=1 } END { exit !found }'\'' /proc/net/unix
     test -S /run/sysrunc/sysrunc-snapshotter.sock
     awk '\''$4 == "00010000" && $8 == "/run/sysrunc/sysrunc-snapshotter.sock" { found=1 } END { exit !found }'\'' /proc/net/unix
     # Query the snapshotter directly: containerd can serve an empty snapshot

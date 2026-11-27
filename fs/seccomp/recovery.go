@@ -57,6 +57,18 @@ func parseListenerIdentity(name string) (listenerIdentity, error) {
 // EnableRecovery must run before Setup, before subprocesses could inherit the
 // activation descriptors. RestoreSessions follows container-state restoration.
 func (scs *SyscallMonitorService) EnableRecovery() error {
+	if path := os.Getenv("SYSRUNC_FD_BROKER_SOCKET"); path != "" {
+		if os.Getenv("LISTEN_FDS") != "" {
+			return fmt.Errorf("broker recovery cannot use systemd activation descriptors")
+		}
+		store, inherited, err := newBrokerStore(path)
+		if err != nil {
+			return err
+		}
+		scs.brokerStore = store
+		scs.inheritedListeners = inherited
+		return nil
+	}
 	store, err := newFDStore()
 	if err != nil {
 		return err
@@ -111,17 +123,18 @@ func (t *syscallTracer) retainListener(pid uint32, container string, fd int) err
 	if err != nil {
 		return err
 	}
+	if t.service.brokerStore != nil {
+		return t.service.brokerStore.add(fd, name)
+	}
 	return t.service.fdStore.add(fd, name)
 }
 
 func (scs *SyscallMonitorService) RestoreSessions() error {
-	if scs.fdStore == nil {
+	if scs.fdStore == nil && scs.brokerStore == nil {
 		return nil
 	}
 	for _, fd := range scs.inheritedListeners {
-		scs.fdStore.mu.Lock()
-		name := scs.fdStore.names[fd]
-		scs.fdStore.mu.Unlock()
+		name := scs.retainedListenerName(fd)
 		identity, err := parseListenerIdentity(name)
 		if err != nil {
 			return err
@@ -132,7 +145,7 @@ func (scs *SyscallMonitorService) RestoreSessions() error {
 		}
 		cntr := scs.css.ContainerLookupById(identity.container)
 		if cntr == nil || cntr.InitPid() != identity.initPID {
-			if err := scs.fdStore.remove(fd); err != nil {
+			if err := scs.removeRetainedListener(fd); err != nil {
 				return err
 			}
 			unix.Close(fd)
@@ -163,6 +176,36 @@ func (scs *SyscallMonitorService) RestoreSessions() error {
 	}
 	scs.inheritedListeners = nil
 	return nil
+}
+
+func (scs *SyscallMonitorService) retainsListeners() bool {
+	return scs.fdStore != nil || scs.brokerStore != nil
+}
+
+func (scs *SyscallMonitorService) removeRetainedListener(fd int) error {
+	if scs.brokerStore != nil {
+		return scs.brokerStore.remove(fd)
+	}
+	if scs.fdStore != nil {
+		return scs.fdStore.remove(fd)
+	}
+	return nil
+}
+
+func (scs *SyscallMonitorService) retainedListenerName(fd int) string {
+	if scs.brokerStore != nil {
+		return scs.brokerStore.name(fd)
+	}
+	if scs.fdStore != nil {
+		scs.fdStore.mu.Lock()
+		defer scs.fdStore.mu.Unlock()
+		return scs.fdStore.names[fd]
+	}
+	return ""
+}
+
+func (scs *SyscallMonitorService) RecoveryListenerCount() int {
+	return len(scs.inheritedListeners)
 }
 
 // Quiesce stops admission and drains every notification already received from

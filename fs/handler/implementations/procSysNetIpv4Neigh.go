@@ -166,6 +166,20 @@ func (h *ProcSysNetIpv4Neigh) Read(
 			&domain.EmuResource{Kind: domain.FileEmuResource, Mode: os.FileMode(uint32(0644))}
 	}
 
+	// Recent kernels omit these legacy neighbor thresholds, while the virtual
+	// handler still exposes them. Keep their values in the container cache when
+	// there is no backing sysctl; writes already update that cache only.
+	_, statErr := os.Stat(n.Path())
+	if os.IsNotExist(statErr) {
+		switch relPath {
+		case "default/gc_thresh1":
+			return readCntrDataWithoutHost(n, req, "128\n")
+		case "default/gc_thresh2":
+			return readCntrDataWithoutHost(n, req, "512\n")
+		case "default/gc_thresh3":
+			return readCntrDataWithoutHost(n, req, "1024\n")
+		}
+	}
 	return readCntrData(h, n, req)
 }
 
@@ -213,10 +227,7 @@ func (h *ProcSysNetIpv4Neigh) ReadDirAll(
 	logrus.Debugf("Executing ReadDirAll() for req-id: %#x, handler: %s, resource: %s",
 		req.ID, h.Name, n.Name())
 
-	var (
-		info        *domain.FileInfo
-		fileEntries []os.FileInfo
-	)
+	var fileEntries []os.FileInfo
 
 	// Obtain relative path to the element being read.
 	relpath, err := filepath.Rel(h.Path, n.Path())
@@ -225,26 +236,22 @@ func (h *ProcSysNetIpv4Neigh) ReadDirAll(
 	}
 
 	// Iterate through map of virtual components.
-	for k, _ := range h.EmuResourceMap {
-
-		if relpath == filepath.Dir(k) {
-			info = &domain.FileInfo{
-				Fname:    filepath.Base(k),
-				Fmode:    os.ModeDir,
-				FmodTime: time.Now(),
-				FisDir:   true,
-			}
-
-			fileEntries = append(fileEntries, info)
-
-		} else if relpath != "." && relpath == filepath.Dir(k) {
-			info = &domain.FileInfo{
-				Fname:    filepath.Base(k),
-				FmodTime: time.Now(),
-			}
-
-			fileEntries = append(fileEntries, info)
+	for k, resource := range h.EmuResourceMap {
+		if relpath != filepath.Dir(k) || !resource.Enabled {
+			continue
 		}
+		mode := resource.Mode
+		isDir := resource.Kind == domain.DirEmuResource
+		if isDir {
+			mode |= os.ModeDir
+		}
+		fileEntries = append(fileEntries, &domain.FileInfo{
+			Fname:    filepath.Base(k),
+			Fmode:    mode,
+			Fsize:    resource.Size,
+			FmodTime: time.Now(),
+			FisDir:   isDir,
+		})
 	}
 
 	// Obtain the usual entries seen within container's namespaces and add them

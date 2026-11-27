@@ -16,9 +16,9 @@ the Linux amd64 CLI to `dist/tools/zpk` from the same release URL used in
 `VERSION` must match that version.
 
 Use the Helm release name `w7panel-sysrunc` in both the outer cluster and
-each CKM inner cluster. The installer and admission workloads keep their
-separate resource names under that release; by default they use the same
-installer image repository and tag.
+each CKM inner cluster. The installer DaemonSet is named
+`w7panel-sysrunc-installer` in both clusters, and both use `installer.image`.
+Admission has a separate resource name and uses the same image.
 
 ## Values
 
@@ -43,7 +43,7 @@ The chart creates the `sysrunc` RuntimeClass in host and nested modes. Its FS
 and ticker features are selected with `sysrunc.io/fs` and `sysrunc.io/ticker`;
 both default to off. Set `compatRuntimeClasses=true` only after the old chart
 has relinquished ownership of its `sysbox-runc` and `sysbox-runc-lite`
-RuntimeClasses. The nested agent installs the runtime and containerd handler
+RuntimeClasses. The nested installer installs the runtime and containerd handler
 from the installer image, then restarts K3s when the template changes.
 RuntimeClasses have no scheduling node selector.
 
@@ -58,7 +58,7 @@ nodeSelector:
 ```
 
 When set, the same label selector is applied to the installer DaemonSet, the
-admission Deployment, and the nested agent DaemonSet. Label the target nodes
+admission Deployment, and the nested installer DaemonSet. Label the target nodes
 before using this option:
 
 ```bash
@@ -73,22 +73,26 @@ To use a custom label, set `nodeSelector` to the desired key/value map.
 
 ### Images
 
-The installer and admission backend use the same image by default. When the
+The installer and admission backend use the same image. When the
 installer tag is empty, the chart defaults it to `v{{ .Chart.AppVersion }}`.
 
 | Value | Default | Description |
 | --- | --- | --- |
 | `installer.image.repository` | `ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc` | Installer image repository. |
 | `installer.image.tag` | `""` | Installer image tag; defaults to `v{{ .Chart.AppVersion }}`. |
-| `admission.image.repository` | `""` | Optional admission image repository override; defaults to `installer.image.repository`. |
-| `admission.image.tag` | `""` | Optional admission image tag override; defaults to `installer.image.tag`. |
-| `admission.image.pullPolicy` | `""` | Optional admission pull policy override; defaults to `installer.image.pullPolicy`. |
 
 Images are pulled directly from the public CCR repository by default.
 
 ### Installer
 
-In nested mode, the Chart always runs the inner agent from `installer.image`.
+For an explicit L0 node rollback, first run a Helm upgrade with
+`--reuse-values --set installer.action=cleanup --wait`. The installer cleans
+each selected host and becomes Ready only after node cleanup completes. Then
+uninstall the Helm release or set `installer.action=install` to reinstall.
+The cleanup action is valid only in host mode. A node selector using the
+`sysrunc-runtime` label is rejected because cleanup removes that label.
+
+In nested mode, the Chart runs the installer from `installer.image`.
 The outer `sysrunc` supplies `/dev/fuse` to the CKM Server at runtime; its
 Pod does not declare a FUSE volume. The Server also needs persistent
 `/var/lib/rancher/k3s`. The agent stores release binaries there and reconciles
@@ -99,13 +103,14 @@ Server after Helm uninstall completes so containerd loads that template;
 
 | Value | Default | Description |
 | --- | --- | --- |
+| `installer.action` | `install` | Host mode action: `install` or explicit node-level `cleanup`. |
 | `installer.podLabels` | `{}` | Extra labels for installer pods. |
 | `installer.podAnnotations` | `{}` | Extra annotations for installer pods. |
 
 ### Admission
 
-The admission backend is rendered by this chart and reuses the installer image
-unless `admission.image` overrides are set. Set `admission.enabled=false` to
+The admission backend is rendered by this chart and uses `installer.image`.
+Set `admission.enabled=false` to
 skip the admission Deployment, Service, and admission-only RBAC.
 
 | Value | Default | Description |

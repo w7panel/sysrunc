@@ -33,6 +33,7 @@ type RestartContainer struct {
 	ProcRO, ProcMask           []string
 	Identity                   domain.ResourceIdentity
 	SharedState                string
+	Ticker                     bool
 	Data                       map[string][]byte
 }
 
@@ -56,7 +57,9 @@ func validRestartID(id string) bool {
 	return id != "" && id != "." && id != ".." && filepath.Base(id) == id
 }
 
-func ReadRestart(path string) (*RestartState, error) {
+// allowUnclean is reserved for a manager crash with an independent listener
+// broker. Callers using systemd's graceful restart keep the clean-only rule.
+func ReadRestart(path string, allowUnclean ...bool) (*RestartState, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -72,7 +75,8 @@ func ReadRestart(path string) (*RestartState, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.Version != 1 || !s.Clean || (s.BootID != strings.TrimSpace(string(boot)) && len(s.Containers) != 0) {
+	crashRecovery := len(allowUnclean) > 0 && allowUnclean[0]
+	if s.Version != 1 || (!s.Clean && !crashRecovery) || (s.BootID != strings.TrimSpace(string(boot)) && len(s.Containers) != 0) {
 		return nil, fmt.Errorf("FS checkpoint is not a clean same-boot restart; preserve mounts and recover manually")
 	}
 	seen := make(map[string]bool)
@@ -94,7 +98,7 @@ func ReadRestart(path string) (*RestartState, error) {
 
 // SaveRestart runs after registration RPCs have drained. shared returns the
 // actual emulation state, including an original pod member that already exited.
-func SaveRestart(service domain.ContainerStateServiceIface, shared func(string) domain.ContainerIface, path, mountpoint string, clean bool) error {
+func SaveRestart(service domain.ContainerStateServiceIface, shared func(string) domain.ContainerIface, path, mountpoint string, clean bool, ticker ...func(string) bool) error {
 	css := service.(*containerStateService)
 	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	if err != nil {
@@ -106,6 +110,11 @@ func SaveRestart(service domain.ContainerStateServiceIface, shared func(string) 
 	sharedSnapshots := make(map[*container]RestartContainer)
 	for _, c := range css.idTable {
 		if !c.IsRegistrationCompleted() {
+			if !clean {
+				// A concurrent pre-registration has not exposed a listener to
+				// the tracee yet. Keep the last complete state recoverable.
+				continue
+			}
 			return fmt.Errorf("container %s registration is incomplete", c.id)
 		}
 		start, err := ProcessStartTime(c.InitPid())
@@ -119,6 +128,9 @@ func SaveRestart(service domain.ContainerStateServiceIface, shared func(string) 
 		r := RestartContainer{ID: c.id, PID: c.initPid, StartTime: start, Ctime: c.ctime,
 			UID: c.uidFirst, UIDSize: c.uidSize, GID: c.gidFirst, GIDSize: c.gidSize,
 			ProcRO: append([]string(nil), c.procRoPaths...), ProcMask: append([]string(nil), c.procMaskPaths...)}
+		if len(ticker) > 0 && ticker[0] != nil {
+			r.Ticker = ticker[0](c.id)
+		}
 		r.Devices = append([]uint32(nil), c.recoveryDevices...)
 		r.Identity = c.resourceIdentity
 		if c.mountInfoParser != nil {

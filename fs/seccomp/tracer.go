@@ -30,6 +30,7 @@ import (
 
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	"github.com/w7panel/sysrunc/fs/domain"
+	"github.com/w7panel/sysrunc/fs/handler/implementations"
 	unixIpc "github.com/w7panel/sysrunc/ipc/unix"
 	"github.com/w7panel/sysrunc/libs/formatter"
 	linuxUtils "github.com/w7panel/sysrunc/libs/linuxUtils"
@@ -93,14 +94,21 @@ type SyscallMonitorService struct {
 	meminfoReader interface {
 		ReadMemInfo(context.Context, string, uint32) ([]byte, error)
 	}
+	sysinfoMemoryReader interface {
+		ReadSysinfoMemory(context.Context, string, uint32) (implementations.SysinfoMemory, bool, error)
+	}
 	uptimeReader interface {
 		ReadUptime(context.Context, string, uint32) ([]byte, error)
 	}
 	statReader interface {
 		ReadStat(context.Context, string, uint32) ([]byte, error)
 	}
+	resourceReader interface {
+		ReadResource(context.Context, string, uint32, string) ([]byte, error)
+	}
 	procHandlers           domain.HandlerServiceIface
 	fdStore                *fdStore
+	brokerStore            *brokerStore
 	inheritedListeners     []int
 	nss                    domain.NSenterServiceIface        // for nsenter functionality requirements
 	css                    domain.ContainerStateServiceIface // for container-state interactions
@@ -147,6 +155,12 @@ func (scs *SyscallMonitorService) SetMemInfoReader(reader interface {
 	scs.meminfoReader = reader
 }
 
+func (scs *SyscallMonitorService) SetSysinfoMemoryReader(reader interface {
+	ReadSysinfoMemory(context.Context, string, uint32) (implementations.SysinfoMemory, bool, error)
+}) {
+	scs.sysinfoMemoryReader = reader
+}
+
 // SetUptimeReader moves container uptime rendering to the proc worker.
 func (scs *SyscallMonitorService) SetUptimeReader(reader interface {
 	ReadUptime(context.Context, string, uint32) ([]byte, error)
@@ -159,6 +173,12 @@ func (scs *SyscallMonitorService) SetStatReader(reader interface {
 	ReadStat(context.Context, string, uint32) ([]byte, error)
 }) {
 	scs.statReader = reader
+}
+
+func (scs *SyscallMonitorService) SetResourceReader(reader interface {
+	ReadResource(context.Context, string, uint32, string) ([]byte, error)
+}) {
+	scs.resourceReader = reader
 }
 
 // SetProcHandlers lets read-only proc notifications use the same virtual
@@ -402,9 +422,9 @@ func (t *syscallTracer) seccompSessionDelete(s seccompSession) {
 
 	if len(closeFds) > 0 {
 		for _, fd := range closeFds {
-			if t.service.fdStore != nil {
-				if err := t.service.fdStore.remove(int(fd)); err != nil {
-					logrus.Errorf("Remove seccomp listener from systemd: %v", err)
+			if t.service.retainsListeners() {
+				if err := t.service.removeRetainedListener(int(fd)); err != nil {
+					logrus.Errorf("Remove retained seccomp listener: %v", err)
 				}
 			}
 			// We are finally ready to close the seccomp-fd.
@@ -483,11 +503,11 @@ func (t *syscallTracer) connHandler(c *net.UnixConn) {
 		unix.Close(int(fd))
 		return
 	}
-	if t.service.fdStore != nil {
+	if t.service.retainsListeners() {
 		if err := t.retainListener(uint32(pid), cntrID, int(fd)); err != nil {
 			t.recoveryMu.RUnlock()
 			logrus.Errorf("Cannot retain seccomp listener for %s: %v", cntrID, err)
-			if removeErr := t.service.fdStore.remove(int(fd)); removeErr != nil {
+			if removeErr := t.service.removeRetainedListener(int(fd)); removeErr != nil {
 				logrus.Errorf("Remove uncertain seccomp listener: %v", removeErr)
 			}
 			unix.Close(int(fd))
@@ -498,8 +518,8 @@ func (t *syscallTracer) connHandler(c *net.UnixConn) {
 	// Send Ack message back to sysbox-runc.
 	if err = unixIpc.SendSeccompInitAckMsg(c); err != nil {
 		t.recoveryMu.RUnlock()
-		if t.service.fdStore != nil {
-			if removeErr := t.service.fdStore.remove(int(fd)); removeErr != nil {
+		if t.service.retainsListeners() {
+			if removeErr := t.service.removeRetainedListener(int(fd)); removeErr != nil {
 				logrus.Errorf("Remove rejected seccomp listener: %v", removeErr)
 			}
 		}

@@ -19,8 +19,6 @@ package handler
 import (
 	"errors"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"os"
 	"sync"
 
@@ -362,20 +360,7 @@ func (hs *handlerService) HostUuid() string {
 }
 
 func (hs *handlerService) FindHostUuid() (string, error) {
-
-	hostUuid, err := ioutil.ReadFile("/sys/devices/virtual/dmi/id/product_uuid")
-
-	// A missing or inaccessible product_uuid is valid in a nested user namespace.
-	// Refer to 'handler/implementations/sysDevicesVirtualDmiId.go' for details.
-	if err != nil && err != io.EOF {
-		if os.IsNotExist(err) || os.IsPermission(err) {
-			hostUuid = []byte("00000000-0000-0000-0000-000000000000")
-		} else {
-			return "", err
-		}
-	}
-
-	return string(hostUuid), nil
+	return implementations.ReadHostUUID()
 }
 
 func (hs *handlerService) ShmSysctlUserNamespaced() bool {

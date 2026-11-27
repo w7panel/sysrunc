@@ -384,15 +384,38 @@ func (h *SysDevicesVirtualDmiId) readProductUuid(
 
 // Method is public exclusively for unit-testing purposes.
 func (h *SysDevicesVirtualDmiId) CreateCntrUuid(cntr domain.ContainerIface) string {
+	return ContainerProductUUID(h.Service.HostUuid(), cntr.ID())
+}
 
-	hostUuid := h.Service.HostUuid()
+// ContainerProductUUID is shared by the FUSE handler and proc worker so both
+// return the same immutable value for a registered container.
+func ContainerProductUUID(hostUuid, containerID string) string {
+	if len(hostUuid) < timeFieldLen-1 {
+		hostUuid = "00000000-0000-0000-0000-000000000000"
+	}
 	hostUuidPref := hostUuid[:timeFieldLen-1]
 
 	// Pad the containerId with zeroes if it doesn't fill its slot.
-	cntrIdPref := formatter.ContainerID{cntr.ID()}.String()
+	cntrIdPref := formatter.ContainerID{containerID}.String()
 	if len(cntrIdPref) < nodeFieldLen {
 		cntrIdPref = padRight(cntrIdPref, "0", nodeFieldLen)
 	}
 
 	return hostUuidPref + "-" + cntrIdPref
+}
+
+// ReadHostUUID uses the same fallback as the FUSE handler when the nested
+// runtime cannot read the host's owner-only DMI file.
+func ReadHostUUID() (string, error) {
+	data, err := os.ReadFile("/sys/devices/virtual/dmi/id/product_uuid")
+	if err != nil && err != io.EOF {
+		if os.IsNotExist(err) || os.IsPermission(err) {
+			return "00000000-0000-0000-0000-000000000000", nil
+		}
+		return "", err
+	}
+	if len(data) < timeFieldLen-1 {
+		return "00000000-0000-0000-0000-000000000000", nil
+	}
+	return string(data), nil
 }

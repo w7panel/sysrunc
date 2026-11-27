@@ -30,7 +30,7 @@ spec:
                 echo 'remove sysrunc and compatible sysbox-runc-lite Pods before uninstalling the nested runtime' >&2
                 exit 1
               fi
-              kubectl -n {{ include "sysrunc.namespace" . }} delete daemonset {{ include "sysrunc.fullname" . }}-inner-agent --ignore-not-found --wait=true
+              kubectl -n {{ include "sysrunc.namespace" . }} delete daemonset {{ include "sysrunc.daemonSetName" . }} {{ include "sysrunc.fullname" . }}-inner-agent --ignore-not-found --wait=true
               exec /opt/sysrunc/scripts/sysrunc-installer.sh uninstall
           securityContext:
             privileged: true

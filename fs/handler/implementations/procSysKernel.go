@@ -425,10 +425,12 @@ func (h *ProcSysKernel) Read(
 		return readCntrData(h, n, req)
 
 	case "domainname":
-		return readCntrData(h, n, req)
+		// The value belongs to the tracee's UTS namespace. Reading the FS
+		// daemon's /proc would cache the installer's hostname for every Pod.
+		return h.Service.GetPassThroughHandler().ReadWithNS(n, req, domain.AllNSs)
 
 	case "hostname":
-		return readCntrData(h, n, req)
+		return h.Service.GetPassThroughHandler().ReadWithNS(n, req, domain.AllNSs)
 
 	case "kptr_restrict":
 		return readCntrData(h, n, req)

@@ -86,8 +86,6 @@ func exitHandler(
 	logrus.Warnf("sysbox-fs caught signal: %s", s)
 
 	logrus.Info("Stopping (gracefully) ...")
-	workers.Close()
-
 	systemd.SdNotify(false, systemd.SdNotifyStopping)
 
 	switch s {
@@ -114,6 +112,7 @@ func exitHandler(
 
 	// Destroy fuse-service and inner fuse-servers.
 	fss.DestroyFuseService()
+	workers.Close()
 
 	// Stop cpu/mem profiling tasks.
 	if profile != nil {
@@ -182,6 +181,17 @@ func setupRunDir() error {
 
 // sysbox-fs main function
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "--fd-broker" {
+		broker, err := seccomp.NewFDBroker(os.Args[2])
+		if err != nil {
+			logrus.Fatal(err)
+		}
+		defer broker.Close()
+		if err := broker.Serve(); err != nil {
+			logrus.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "--worker" {
 		repair := func(ctx context.Context, req worker.RepairRequest) ([]string, error) {
 			devices := make([]recovery.Device, 0, len(req.Devices))
@@ -214,7 +224,7 @@ func main() {
 
 	app.Flags = []cli.Flag{
 		cli.DurationFlag{Name: "resource-cache-ttl", Value: 200 * time.Millisecond, Usage: "resource snapshot TTL (explicit setting also overrides uptime default)"},
-		cli.BoolFlag{Name: "session-recovery", Usage: "enable same-boot graceful recovery (requires systemd FD store and kernel BPF/BTF)"},
+		cli.BoolFlag{Name: "session-recovery", Usage: "enable same-boot recovery (requires systemd FD store or a Sysrunc FD broker, plus kernel BPF/BTF)"},
 		cli.StringFlag{
 			Name:  "mountpoint",
 			Value: "/var/lib/sysruncfs",
@@ -454,7 +464,7 @@ func main() {
 
 		var recoveryState *recoveryRunner
 		if ctx.Bool("session-recovery") {
-			recoveryState, err = prepareRecovery(containerStateService, fuseServerService, ctx.GlobalString("mountpoint"))
+			recoveryState, err = prepareRecovery(containerStateService, fuseServerService, ctx.GlobalString("mountpoint"), syscallMonitorService.RecoveryListenerCount())
 			if err != nil {
 				return err
 			}
@@ -469,21 +479,50 @@ func main() {
 			return fmt.Errorf("start fs workers: %w", err)
 		}
 		defer workers.Close()
+		fuseServerService.SetMountpointWorker(workers)
+		if recoveryState != nil {
+			for _, restored := range recoveryState.restored {
+				if containerStateService.ContainerLookupById(restored.ID) == nil {
+					continue // The checkpointed process exited before recovery.
+				}
+				if err := workers.PreRegister(restored.ID, ""); err != nil {
+					return fmt.Errorf("restore FUSE pre-registration for %s: %w", restored.ID, err)
+				}
+				if err := workers.Register(worker.Container{
+					ID: restored.ID, PID: int32(restored.PID), Ticker: restored.Ticker, Ctime: restored.Ctime,
+					UID: restored.UID, UIDSize: restored.UIDSize, GID: restored.GID, GIDSize: restored.GIDSize,
+					ProcRO: restored.ProcRO, ProcMask: restored.ProcMask,
+					CgroupData: restored.Identity.CgroupData, PidNS: restored.Identity.Pidns,
+					InitStartTime: restored.Identity.InitStartTime,
+				}); err != nil {
+					return fmt.Errorf("restore worker for %s: %w", restored.ID, err)
+				}
+			}
+		}
 		implementations.SetUUIDWorker(workers)
 		implementations.SetLoadavgWorker(workers)
+		implementations.SetProcSnapshotWorker(workers)
+		implementations.SetVirtualSysctlWorker(workers)
 		syscallMonitorService.SetUUIDReader(workers)
 		syscallMonitorService.SetDiskstatsReader(workers)
 		syscallMonitorService.SetSwapsReader(workers)
 		syscallMonitorService.SetCPUInfoReader(workers)
 		syscallMonitorService.SetMemInfoReader(workers)
+		syscallMonitorService.SetSysinfoMemoryReader(workers)
 		syscallMonitorService.SetUptimeReader(workers)
 		syscallMonitorService.SetStatReader(workers)
+		syscallMonitorService.SetResourceReader(workers)
 		syscallMonitorService.SetProcHandlers(handlerService)
 		if endpoint, ok := ipcService.(interface{ SetWorkers(*worker.Supervisor) }); ok {
 			endpoint.SetWorkers(workers)
 		}
 		if recoveryState != nil {
 			recoveryState.workers = workers
+			if os.Getenv("SYSRUNC_FD_BROKER_SOCKET") != "" {
+				ipcService.(interface{ SetCheckpoint(func() error) }).SetCheckpoint(func() error {
+					return recoveryState.checkpointCrash(fuseServerService)
+				})
+			}
 		}
 		syscallMonitorService.Setup(
 			nsenterService,

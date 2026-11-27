@@ -18,6 +18,7 @@ package implementations
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -87,6 +88,67 @@ var (
 	procStatStates    = make(map[string]*procStatState)
 	procStatNextPrune time.Time
 )
+
+type procSnapshotReader interface {
+	ReadCPUInfo(context.Context, string, uint32) ([]byte, error)
+	ReadDiskstats(context.Context, string, uint32) ([]byte, error)
+	ReadSwaps(context.Context, string, uint32) ([]byte, error)
+	ReadMemInfo(context.Context, string, uint32) ([]byte, error)
+	ReadUptime(context.Context, string, uint32) ([]byte, error)
+	ReadStat(context.Context, string, uint32) ([]byte, error)
+	ReadResource(context.Context, string, uint32, string) ([]byte, error)
+}
+
+var procSnapshotWorker struct {
+	sync.RWMutex
+	reader procSnapshotReader
+}
+
+var procFUSEWorkerLogged sync.Map
+
+// SetProcSnapshotWorker shares the registered proc worker with FUSE reads.
+func SetProcSnapshotWorker(reader procSnapshotReader) {
+	procSnapshotWorker.Lock()
+	procSnapshotWorker.reader = reader
+	procSnapshotWorker.Unlock()
+}
+
+func (h *readOnlyResource) readFromWorker(req *domain.HandlerRequest) ([]byte, bool) {
+	if req == nil || req.SkipWorker || req.Container == nil || req.Pid == 0 {
+		return nil, false
+	}
+	procSnapshotWorker.RLock()
+	reader := procSnapshotWorker.reader
+	procSnapshotWorker.RUnlock()
+	if reader == nil {
+		return nil, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	id := req.Container.ID()
+	var data []byte
+	var err error
+	switch h.Path {
+	case "/proc/cpuinfo":
+		data, err = reader.ReadCPUInfo(ctx, id, req.Pid)
+	case "/proc/diskstats":
+		data, err = reader.ReadDiskstats(ctx, id, req.Pid)
+	case "/proc/swaps":
+		data, err = reader.ReadSwaps(ctx, id, req.Pid)
+	case "/proc/meminfo":
+		data, err = reader.ReadMemInfo(ctx, id, req.Pid)
+	case "/proc/uptime":
+		data, err = reader.ReadUptime(ctx, id, req.Pid)
+	case "/proc/stat":
+		data, err = reader.ReadStat(ctx, id, req.Pid)
+	case "/proc/slabinfo", "/proc/pressure/cpu", "/proc/pressure/io", "/proc/pressure/memory",
+		"/sys/devices/system/cpu/online", "/sys/devices/system/cpu/present":
+		data, err = reader.ReadResource(ctx, id, req.Pid, h.Path)
+	default:
+		return nil, false
+	}
+	return data, err == nil && data != nil
+}
 
 func newReadOnlyResource(name, path string, read resourceReader) *readOnlyResource {
 	return &readOnlyResource{
@@ -178,7 +240,16 @@ func (h *readOnlyResource) snapshotData(req *domain.HandlerRequest) ([]byte, err
 		key = resourceCgroupKey(req)
 	}
 	return h.snapshots.get(key, resourceOwnerKey(req), req.ResourceOwner,
-		req.Offset > 0, time.Now(), resourceCacheTTL(resourceSnapshotTTL), func() ([]byte, error) { return h.read(req) })
+		req.Offset > 0, time.Now(), resourceCacheTTL(resourceSnapshotTTL), func() ([]byte, error) {
+			if data, ok := h.readFromWorker(req); ok {
+				logged, _ := procFUSEWorkerLogged.LoadOrStore(h.Path, &sync.Once{})
+				logged.(*sync.Once).Do(func() {
+					logrus.Infof("FUSE read for %s served by proc worker", h.Path)
+				})
+				return data, nil
+			}
+			return h.read(req)
+		})
 }
 
 func (h *readOnlyResource) ReleaseResourceSnapshots(owner string) {
@@ -501,6 +572,42 @@ func readCPUPresent(req *domain.HandlerRequest) ([]byte, error) {
 		return []byte(cpuRangeForCount(count) + "\n"), nil
 	}
 	return cachedHostFile("/sys/devices/system/cpu/present")
+}
+
+// ReadWorkerResourceForPID renders fixed read-only resources in the tracee's
+// cgroup. The caller supplies only paths already allowed by the proc fast path.
+func ReadWorkerResourceForPID(path string, pid uint32) ([]byte, error) {
+	if pid == 0 {
+		return nil, fmt.Errorf("resource read requires a tracee PID")
+	}
+	// These immutable, world-readable values are identical in every container.
+	// Read them in the proc worker without constructing a cgroup view.
+	switch path {
+	case "/proc/sys/kernel/cap_last_cap", "/proc/sys/kernel/ngroups_max",
+		"/proc/sys/kernel/ostype", "/proc/sys/kernel/osrelease", "/proc/sys/kernel/version":
+		return os.ReadFile(path)
+	}
+	req := &domain.HandlerRequest{Pid: pid}
+	if path == "/proc/slabinfo" {
+		return readSlabinfo(req)
+	}
+	if err := requireRequestCgroup(req); err != nil {
+		return nil, err
+	}
+	switch path {
+	case "/proc/pressure/cpu":
+		return readPressure("cpu", "cpu", "cpu.pressure")(req)
+	case "/proc/pressure/io":
+		return readPressure("io", "blkio", "io.pressure")(req)
+	case "/proc/pressure/memory":
+		return readPressure("memory", "memory", "memory.pressure")(req)
+	case "/sys/devices/system/cpu/online":
+		return readCPUOnline(req)
+	case "/sys/devices/system/cpu/present":
+		return readCPUPresent(req)
+	default:
+		return nil, fmt.Errorf("unsupported worker resource %q", path)
+	}
 }
 
 func readRawCPUSet(req *domain.HandlerRequest) (string, bool) {

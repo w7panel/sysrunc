@@ -94,6 +94,7 @@ type HandlerRequest struct {
 	SkipIdRemap      bool
 	Offset           int64
 	NoCache          bool
+	SkipWorker       bool
 	Data             []byte
 	Container        ContainerIface
 }

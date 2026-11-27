@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/w7panel/sysrunc/fs/domain"
 	"github.com/w7panel/sysrunc/fs/mocks"
 	"github.com/w7panel/sysrunc/fs/mount"
 	"github.com/w7panel/sysrunc/fs/process"
 	"github.com/w7panel/sysrunc/fs/sysio"
-	"github.com/stretchr/testify/mock"
 	"golang.org/x/sys/unix"
 )
 
@@ -31,7 +31,7 @@ func restartFixture(t *testing.T) *RestartState {
 	}
 	return &RestartState{Version: 1, BootID: strings.TrimSpace(string(boot)), Clean: true, Containers: []RestartContainer{{
 		ID: "container", SharedState: "exited-original-owner", PID: pid, StartTime: start, Devices: []uint32{21},
-		Ctime: time.Unix(100, 0), UID: 100000, UIDSize: 65536, GID: 100001, GIDSize: 65536,
+		Ctime: time.Unix(100, 0), Ticker: true, UID: 100000, UIDSize: 65536, GID: 100001, GIDSize: 65536,
 		ProcRO: []string{"/proc/sys"}, ProcMask: []string{"/proc/kcore"},
 		Data:   map[string][]byte{"/proc/sys/kernel/hostname": []byte("original")},
 		Mounts: []*domain.MountInfo{{MountID: 42, MountPoint: "/proc/meminfo", MajorMinorVer: "0:21", MpInode: 43}},
@@ -69,6 +69,12 @@ func TestRestartCheckpointValidation(t *testing.T) {
 			loaded, err := ReadRestart(path)
 			if (err == nil) != test.valid {
 				t.Fatalf("validation=%v", err)
+			}
+			if test.name == "dirty" {
+				recovered, crashErr := ReadRestart(path, true)
+				if crashErr != nil || !reflect.DeepEqual(state, recovered) {
+					t.Fatalf("broker-backed crash checkpoint = %+v, %v", recovered, crashErr)
+				}
 			}
 			if test.valid && !reflect.DeepEqual(state, loaded) {
 				t.Fatalf("checkpoint lost fields: %+v", loaded)

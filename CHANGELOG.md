@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- Remove the stale FUSE submodule declaration; the vendored `fs/bazil` sources are already tracked directly in this repository.
+- Move the remaining container-cached virtual proc/sys values into each registered proc worker's state and replay successful writes after a worker restart. Seed complete values on the first host-backed read, including when the caller requests only one byte; retain existing write validation and host-side behavior.
+- Move four host-absent virtual sysctls into per-container proc worker state, replay writes after worker restart, and align seccomp reads with the shared FUSE state for containers in one network namespace. Serialize concurrent writes to preserve replay order; verified read and restart behavior on 218.
+- Move normal-path `sysinfo` process selection into each registered container's proc worker; the manager checks process identity only when the worker is unavailable. A 256Mi 218 Pod returned its cgroup memory for `free` and host kernel memory for the same program under another name.
+- Read intercepted `statx` metadata from the tracee's virtual mount rather than host proc. Host inode, device, and ownership differed from the container's FUSE view; 218 now returns the same metadata as `stat()` for virtual and host-absent proc files.
+- Recognize a single virtual filename prefixed with `./` relative to its FUSE directory fd in the seccomp open and statx path. Traversal through `..` and nested components keeps kernel/FUSE resolution.
+- Add explicit host node cleanup with completion readiness checks and admission resource cleanup. The 218 cleanup and reinstall restored the runtime and node label, then the inner FS, nginx, and persistent rootfs probes returned Ready.
+- Delegate cgroup memory calculation for intercepted `sysinfo` calls to each container's proc worker, with the manager calculation retained as a fallback when the worker is unavailable.
+- Continue virtual file reads after a short `ReadAt` and reject short proc/sys writes instead of caching or reporting incomplete data as successful.
+- Store FS crash checkpoints on container tmpfs and migrate an existing `/run/sysrunc` checkpoint on upgrade. CKM Server rootfs backed by fuse-overlayfs can reject atomic rename over a file inherited from a lower layer with `ENOTDIR`; the new path retained the checkpoint across an FS SIGKILL on 218.
+- Added an independent Unix packet FD broker for non-systemd L1 FS recovery. The nested installer starts it and restarts FS with session recovery; runtime checkpoints, old FUSE mount repair, and listener restoration survived an FS SIGKILL on 218. Recovery discards stale checkpoints after the CKM Server PID namespace is replaced.
+- Route FUSE reads of registered containers' read-only proc and CPU resource snapshots through the proc worker, with local handler fallback. Keep seccomp fallback from retrying a failed worker request.
+- Check that every enabled emulated proc/sys file resource has an exact read path, including the IPVS resources.
+- Add plain-read snapshots for the four virtual `/proc/sys/net/ipv4/vs` entries when the IPVS directory exists; preserve the absent-module behavior and leave writes on FUSE.
+- Route eligible `/proc/slabinfo` plain reads through the registered proc worker; preserve its FUSE fallback and access error when the nested user namespace cannot read the backing file.
+- Use the same `installer` DaemonSet and container naming in host and nested Chart modes. Installer and admission now share the single `installer.image` value, including the nested uninstall Job image.
+- Move container-specific `product_uuid` rendering into the registered proc worker, retaining the manager handler as a fallback when the worker is unavailable.
+- Accelerate plain reads of four owner-only virtual proc/sys files after checking the tracee filesystem UID against the virtual root owner; retain their 0600 or 0400 descriptor modes and leave other users on the FUSE permission path.
+- Match manager-to-worker replies by request ID so one container's slow proc, ticker, or FUSE repair request does not hold up another container in the same worker process.
+- Read virtual hostname and domainname in the requesting container's namespace, then serve plain read opens through sealed memfd snapshots. Added FUSE worker pre-registration replay and mountpoint lifecycle handling; the normal FUSE connection still runs in the manager.
+- Require the FUSE worker to prepare mountpoints for new registrations and roll back the container and network namespace record if preparation fails.
+- Run FUSE mount repair through each registered container's cancellable worker goroutine and reject repair after that container unregisters.
+- Serve five global read-only `/proc/sys/kernel` values through the per-container proc worker for seccomp notify reads, with the original virtual handler as fallback.
+- Added `getdents64` seccomp notify fast paths for registered virtual `/proc` and `/sys` directories. The fast path reads the same directory handler as FUSE, and both paths sort entries before assigning byte-offset cookies; masked paths and unsupported directory fds retain FUSE handling.
+- Moved cgroup-scoped `/proc/pressure/{cpu,io,memory}` and `/sys/devices/system/cpu/{online,present}` snapshot calculation from the FS manager into each registered container's proc worker goroutine. Seccomp still injects the read-only result as a memfd; worker failure retains the manager handler and FUSE fallbacks.
 - Built the rsync bundled for nested K3s as a static binary with ACL and xattr support. The first 0.1.1 empty-PVC integration test exposed its missing glibc loader; 0.1.2 fixes the copy path in the minimal K3s rootfs.
 - Made L2 rootfs empty-PVC seeding serial and retryable after an interrupted copy, and published persistent special directories only after a complete rsync. The copy now preserves hard links, ACLs, xattrs, and mapped ownership; image and special mount paths reject symlink traversal.
 - Added seccomp notify read and statx fast paths for the three read-only UTS files `/proc/sys/kernel/{ostype,osrelease,version}`. Other `/proc/sys` paths continue through the existing kernel and FUSE path.

@@ -17,6 +17,7 @@
 package seccomp
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -69,11 +70,20 @@ func (t *syscallTracer) processSysinfo(
 	if addr == 0 {
 		return t.createErrorResponse(req.ID, syscall.EFAULT), nil
 	}
-	if !shouldVirtualizeSysinfo(req.Pid) {
-		return t.createContinueResponse(req.ID), nil
+	var mem implementations.SysinfoMemory
+	var ok bool
+	var workerErr error
+	if t.service.sysinfoMemoryReader != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		mem, ok, workerErr = t.service.sysinfoMemoryReader.ReadSysinfoMemory(ctx, cntr.ID(), req.Pid)
+		cancel()
 	}
-
-	mem, ok := implementations.SysinfoMemoryForPid(req.Pid)
+	if t.service.sysinfoMemoryReader == nil || workerErr != nil {
+		if !shouldVirtualizeSysinfo(req.Pid) {
+			return t.createContinueResponse(req.ID), nil
+		}
+		mem, ok = implementations.SysinfoMemoryForPid(req.Pid)
+	}
 	if !ok {
 		return t.createContinueResponse(req.ID), nil
 	}

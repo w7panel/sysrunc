@@ -139,6 +139,9 @@ func (h *ProcSysNetCore) Read(
 
 	switch resource {
 	case "default_qdisc":
+		if _, err := os.Stat(n.Path()); os.IsNotExist(err) {
+			return h.readDefaultQdiscWithoutHost(n, req)
+		}
 		return readCntrData(h, n, req)
 
 	case "somaxconn":
@@ -182,9 +185,14 @@ func (h *ProcSysNetCore) ReadDirAll(
 	var fileEntries []os.FileInfo
 
 	// Iterate through map of emulated components.
-	for k, _ := range h.EmuResourceMap {
+	for k, resource := range h.EmuResourceMap {
+		if !resource.Enabled {
+			continue
+		}
 		info := &domain.FileInfo{
 			Fname:    k,
+			Fmode:    resource.Mode,
+			Fsize:    resource.Size,
 			FmodTime: time.Now(),
 		}
 
@@ -279,5 +287,15 @@ func (h *ProcSysNetCore) writeDefaultQdisc(
 		return 0, fuse.IOerror{Code: syscall.EINVAL}
 	}
 
+	if _, err := os.Stat(n.Path()); os.IsNotExist(err) {
+		return writeCntrData(h, n, req, nil)
+	}
 	return writeCntrData(h, n, req, writeToFs)
+}
+
+// The kernel may omit default_qdisc in a nested network namespace even when
+// the virtual handler exposes it. Keep a per-container value in that case;
+// never invent a host sysctl or write into another network namespace.
+func (h *ProcSysNetCore) readDefaultQdiscWithoutHost(n domain.IOnodeIface, req *domain.HandlerRequest) (int, error) {
+	return readCntrDataWithoutHost(n, req, "fq_codel\n")
 }

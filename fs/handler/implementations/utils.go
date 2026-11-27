@@ -26,9 +26,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/w7panel/sysrunc/fs/domain"
 	"github.com/w7panel/sysrunc/fs/fuse"
-	"github.com/sirupsen/logrus"
 )
 
 func readCntrData(
@@ -41,6 +41,11 @@ func readCntrData(
 
 	cntr.Lock()
 	defer cntr.Unlock()
+	if !req.SkipWorker && WorkerVirtualSysctl(path) {
+		if size, ok := readVirtualSysctlFromWorker(cntr, path, req.Offset, &req.Data); ok {
+			return size, nil
+		}
+	}
 
 	// Check if this resource is cached for this container. If it isn't, fetch
 	// its data from the host FS and cache it within the container struct.
@@ -51,8 +56,10 @@ func readCntrData(
 	}
 
 	if req.Offset == 0 && sz == 0 && err == io.EOF {
-
-		sz, err = readFs(h, n, req.Offset, &req.Data)
+		// Cache the complete virtual value even when the caller asks for one
+		// byte. The proc worker replays this snapshot after a restart.
+		full := make([]byte, 1024)
+		sz, err = readFs(h, n, req.Offset, &full)
 		if err != nil && err != io.EOF {
 			return 0, fuse.IOerror{Code: syscall.EINVAL}
 		}
@@ -61,12 +68,44 @@ func readCntrData(
 			return 0, nil
 		}
 
-		err = cntr.SetData(path, req.Offset, req.Data[0:sz])
+		err = cntr.SetData(path, req.Offset, full[:sz])
 		if err != nil {
 			return 0, fuse.IOerror{Code: syscall.EINVAL}
 		}
+		if WorkerVirtualSysctl(path) {
+			syncVirtualSysctlToWorker(cntr, path)
+		}
+		return copy(req.Data, full[:sz]), nil
 	}
 
+	return sz, nil
+}
+
+// readCntrDataWithoutHost initializes a virtual sysctl only in this
+// container's cache when the host has no accessible backing file.
+func readCntrDataWithoutHost(n domain.IOnodeIface, req *domain.HandlerRequest, initial string) (int, error) {
+	cntr := req.Container
+	cntr.Lock()
+	defer cntr.Unlock()
+	if WorkerVirtualSysctl(n.Path()) && !req.SkipWorker {
+		if size, ok := readVirtualSysctlFromWorker(cntr, n.Path(), req.Offset, &req.Data); ok {
+			return size, nil
+		}
+	}
+	sz, err := cntr.Data(n.Path(), req.Offset, &req.Data)
+	if err != nil && err != io.EOF {
+		return 0, fuse.IOerror{Code: syscall.EINVAL}
+	}
+	if req.Offset == 0 && sz == 0 && err == io.EOF {
+		data := []byte(initial)
+		if err := cntr.SetData(n.Path(), 0, data); err != nil {
+			return 0, fuse.IOerror{Code: syscall.EINVAL}
+		}
+		if WorkerVirtualSysctl(n.Path()) {
+			syncVirtualSysctlToWorker(cntr, n.Path())
+		}
+		return copy(req.Data, data), nil
+	}
 	return sz, nil
 }
 
@@ -99,6 +138,9 @@ func writeCntrData(
 	if err != nil {
 		return 0, fuse.IOerror{Code: syscall.EINVAL}
 	}
+	if WorkerVirtualSysctl(path) {
+		syncVirtualSysctlToWorker(cntr, path)
+	}
 
 	return sz, nil
 }
@@ -129,9 +171,7 @@ func readFs(
 	}
 	defer n.Close()
 
-	// TODO: ReadAt may not read all data; check sz and loop until we read all
-	// the data
-	sz, err := n.ReadAt(*data, offset)
+	sz, err := readAvailableAt(n.ReadAt, *data, offset)
 	if err != nil && err != io.EOF {
 		logrus.Errorf("Could not read from file %v at offset %d", n.Path(), offset)
 		return 0, err
@@ -155,15 +195,34 @@ func readHostFs(
 	}
 	defer n.Close()
 
-	// TODO: ReadAt may not read all data; check sz and loop until we read all
-	// the data
-	sz, err := n.ReadAt(*data, offset)
+	sz, err := readAvailableAt(n.ReadAt, *data, offset)
 	if err != nil && err != io.EOF {
 		logrus.Errorf("Could not read from file %v at offset %d", n.Path(), offset)
 		return 0, err
 	}
 
 	return sz, err
+}
+
+// readAvailableAt fills the caller's buffer unless the source reaches EOF.
+// Some pseudo files return a short read without EOF, so a single ReadAt can
+// silently truncate the virtual file that is cached for the container.
+func readAvailableAt(readAt func([]byte, int64) (int, error), data []byte, offset int64) (int, error) {
+	read := 0
+	for read < len(data) {
+		n, err := readAt(data[read:], offset+int64(read))
+		if n < 0 || n > len(data)-read {
+			return read, io.ErrUnexpectedEOF
+		}
+		read += n
+		if err != nil {
+			return read, err
+		}
+		if n == 0 {
+			return read, io.ErrNoProgress
+		}
+	}
+	return read, nil
 }
 
 // writeFs writes the given data to the given IO node. argument 'wrCondition'
@@ -229,9 +288,8 @@ func writeFs(
 
 	for i := 0; i < retries; i++ {
 
-		// TODO: ReadAt may not read all data; check sz and loop until we read all
-		// the data
-		sz, err := n.ReadAt(currData, offset)
+		currData = currData[:cap(currData)]
+		sz, err := readAvailableAt(n.ReadAt, currData, offset)
 		if err != nil && err != io.EOF {
 			return 0, err
 		}
@@ -256,15 +314,26 @@ func writeFs(
 			time.Sleep(time.Duration(d) * time.Microsecond)
 		}
 
-		// TODO: WriteAt may not write all data; check sz and loop until we write
-		// all the data
-		_, err = n.WriteAt(data, offset)
+		// A proc/sys write is one logical operation. A short write cannot
+		// safely be replayed as another sysctl write at a later offset.
+		err = writeOnceAt(n.WriteAt, data, offset)
 		if err != nil {
 			return 0, err
 		}
 	}
 
 	return len(data), nil
+}
+
+func writeOnceAt(writeAt func([]byte, int64) (int, error), data []byte, offset int64) error {
+	n, err := writeAt(data, offset)
+	if err != nil {
+		return err
+	}
+	if n != len(data) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
 // Returns true unconditionally; meant to be used as the 'wrCondition' argument in writeFs()
@@ -286,7 +355,7 @@ func writeHostFs(
 	}
 	defer n.Close()
 
-	_, err := n.WriteAt(data, offset)
+	err := writeOnceAt(n.WriteAt, data, offset)
 	if err != nil {
 		return 0, err
 	}

@@ -1507,14 +1507,10 @@ function delete_sysrunc_pods() {
 }
 
 function cleanup_sysrunc_admission_resources() {
-	set +e
-
 	echo "Cleaning up sysrunc-admission runtime-owned Kubernetes resources..."
 	kubectl delete mutatingwebhookconfiguration "${SYSRUNC_ADMISSION_WEBHOOK_NAME}" --ignore-not-found
 	kubectl delete secret -n "${SYSRUNC_ADMISSION_NAMESPACE}" "${SYSRUNC_ADMISSION_CA_SECRET_NAME}" "${SYSRUNC_ADMISSION_TLS_SECRET_NAME}" --ignore-not-found
 	kubectl delete lease.coordination.k8s.io -n "${SYSRUNC_ADMISSION_NAMESPACE}" "${SYSRUNC_ADMISSION_LEASE_NAME}" --ignore-not-found
-
-	set -e
 }
 
 #
@@ -1705,7 +1701,9 @@ function main() {
 
 	cleanup)
 		mkdir -p ${host_var_lib_sysrunc_deploy_k8s}
-		cleanup_sysrunc_admission_resources
+		if [[ "${SYSRUNC_ADMISSION_ENABLED:-false}" == "true" ]]; then
+			cleanup_sysrunc_admission_resources
+		fi
 
 		# Switch the K8s runtime away from CRI-O (but only if this daemonset installed CRI-O previously)
 		if [ -f ${host_var_lib_sysrunc_deploy_k8s}/crio_installed ] && [[ "$k8s_runtime" == "crio" ]]; then
@@ -1772,6 +1770,11 @@ function main() {
 	# This script will be called as a daemonset. Do not return, otherwise the
 	# daemonset will restart and rexecute the script
 	echo "Done."
+	if [[ "$action" == "cleanup" ]]; then
+		# The host cleanup DaemonSet stays alive, but must become Ready only
+		# after the node-level removal and pod deletion have completed.
+		touch /tmp/sysrunc-cleanup-complete
+	fi
 
 	sleep infinity
 }

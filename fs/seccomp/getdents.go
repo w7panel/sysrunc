@@ -3,6 +3,8 @@ package seccomp
 import (
 	"encoding/binary"
 	"os"
+	"path/filepath"
+	"sort"
 	"sync"
 	"syscall"
 
@@ -19,7 +21,75 @@ import (
 // entry's next byte offset as its cookie.
 const linuxDirent64Header = 19
 
-var randomGetdentsFastpathLogged sync.Once
+var virtualGetdentsFastpathLogged sync.Map
+
+const procPressureDir = "/proc/pressure"
+
+var virtualDirectories = map[string]bool{
+	"/proc/pressure":                      true,
+	"/proc/sys":                           true,
+	"/proc/sys/fs":                        true,
+	"/proc/sys/kernel":                    true,
+	"/proc/sys/kernel/random":             true,
+	"/proc/sys/kernel/yama":               true,
+	"/proc/sys/net":                       true,
+	"/proc/sys/net/core":                  true,
+	"/proc/sys/net/ipv4":                  true,
+	"/proc/sys/net/ipv4/vs":               true,
+	"/proc/sys/net/ipv4/neigh":            true,
+	"/proc/sys/net/ipv4/neigh/default":    true,
+	"/proc/sys/net/netfilter":             true,
+	"/proc/sys/net/unix":                  true,
+	"/proc/sys/vm":                        true,
+	"/sys/kernel":                         true,
+	"/sys/kernel/config":                  true,
+	"/sys/kernel/debug":                   true,
+	"/sys/kernel/security":                true,
+	"/sys/kernel/tracing":                 true,
+	"/sys/devices/virtual":                true,
+	"/sys/devices/virtual/dmi":            true,
+	"/sys/devices/virtual/dmi/id":         true,
+	"/sys/module/nf_conntrack/parameters": true,
+}
+
+type virtualDirEntry struct{ info os.FileInfo }
+
+func (entry virtualDirEntry) Name() string               { return entry.info.Name() }
+func (entry virtualDirEntry) IsDir() bool                { return entry.info.IsDir() }
+func (entry virtualDirEntry) Info() (os.FileInfo, error) { return entry.info, nil }
+func (entry virtualDirEntry) Type() os.FileMode {
+	if entry.info.IsDir() {
+		return os.ModeDir
+	}
+	return entry.info.Mode().Type()
+}
+
+func (t *syscallTracer) virtualDirectoryEntries(cntr domain.ContainerIface, pid uint32, path string) ([]os.DirEntry, error) {
+	service := t.service.procHandlers
+	if service == nil {
+		return nil, syscall.ENOENT
+	}
+	node := service.IOService().NewIOnode(filepath.Base(path), path, os.ModeDir)
+	handler, ok := service.LookupHandler(node)
+	if !ok || !handler.GetEnabled() {
+		return nil, syscall.ENOENT
+	}
+	cntr = t.procStateContainer(cntr)
+	owner := service.AcquireResourceOwner(cntr)
+	defer service.ReleaseResourceOwner(owner)
+	process := t.service.prs.ProcessCreate(pid, 0, 0)
+	req := &domain.HandlerRequest{Pid: pid, Uid: process.Uid(), Gid: process.Gid(), Container: cntr, ResourceOwner: owner}
+	files, err := handler.ReadDirAll(node, req)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]os.DirEntry, 0, len(files))
+	for _, file := range files {
+		entries = append(entries, virtualDirEntry{file})
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, nil
+}
 
 func direntRecordLength(name string) int {
 	return (linuxDirent64Header + len(name) + 1 + 7) &^ 7
@@ -105,10 +175,10 @@ func (t *syscallTracer) processGetdents64(req *sysRequest, notifyFD int32, cntr 
 	}
 	process := t.service.prs.ProcessCreate(req.Pid, 0, 0)
 	path, err := process.GetFd(targetFD)
-	if err != nil || path != procRandomDir {
+	if err != nil || !virtualDirectories[path] {
 		return t.createContinueResponse(req.ID), nil
 	}
-	if procRandomDirMasked(cntr.ProcMaskPaths()) {
+	if procDirMasked(path, cntr.ProcMaskPaths()) {
 		return t.createContinueResponse(req.ID), nil
 	}
 	pidfd, err := unix.PidfdOpen(int(req.Pid), 0)
@@ -131,7 +201,7 @@ func (t *syscallTracer) processGetdents64(req *sysRequest, notifyFD int32, cntr 
 	if err != nil {
 		return t.createContinueResponse(req.ID), nil
 	}
-	entries, err := os.ReadDir(procRandomDir)
+	entries, err := t.virtualDirectoryEntries(cntr, req.Pid, path)
 	if err != nil {
 		return t.createContinueResponse(req.ID), nil
 	}
@@ -150,8 +220,9 @@ func (t *syscallTracer) processGetdents64(req *sysRequest, notifyFD int32, cntr 
 			return t.createContinueResponse(req.ID), nil
 		}
 	}
-	randomGetdentsFastpathLogged.Do(func() {
-		logrus.Infof("getdents64 fast path served %s through seccomp notify", procRandomDir)
+	logged, _ := virtualGetdentsFastpathLogged.LoadOrStore(path, &sync.Once{})
+	logged.(*sync.Once).Do(func() {
+		logrus.Infof("getdents64 fast path served %s through seccomp notify", path)
 	})
 	return t.createSuccessResponseWithRetValue(req.ID, uint64(len(data))), nil
 }

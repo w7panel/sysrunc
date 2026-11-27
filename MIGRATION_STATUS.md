@@ -1,5 +1,118 @@
 # Migration status
 
+## Latest 218 result, 2026-11-27
+
+The L0 node rollback path has now passed an uninstall and reinstall on 218.
+The cleanup DaemonSet removed the host runtime, install marker, K3s runtime
+template entry, and node label; reinstall restored them and the node stayed
+Ready. L0 Helm revision 14 and L1 revision 44 run the same published
+`w7panel-sysrunc:218-20261127-host-rollback2` image digest for installer and
+admission. Both installer DaemonSets are named `w7panel-sysrunc-installer`;
+admission Deployments retain `w7panel-sysrunc-admission`.
+After the L0 reinstall, two L1 one-shot test Pods were recreated without
+deleting their PVCs. The FS, ordinary nginx, and rootfs Pods are Ready;
+`/proc/meminfo` is readable and the rootfs marker remains intact. See
+`INTEGRATION_218.md` for the exact digest and checks.
+The subsequent `218-20261127-relative-proc` image ran in L0 revision 15 and
+L1 revision 45 with one shared digest for all four installer and admission
+containers. L1 confirmed `./meminfo` and `./hostname` memfd opens from their
+virtual directories, while a traversal path retained its FUSE fd. L0 image
+rollout recreated the CKM Server; all three L2 probes recovered with PVCs
+intact and the rootfs marker unchanged.
+The next `218-20261127-statx-tracee` image corrected intercepted `statx`
+metadata: the earlier host lookup returned the wrong inode, device, and owner
+for FUSE-mounted paths. On 218, a direct syscall probe now matches `stat()`
+for four representative virtual paths, including a file absent on the nested
+host. L0 revision 16 and L1 revision 47 run its shared digest; the three L2
+probes recovered after the outer CKM Server recreation.
+The `218-20261127-sysinfo-worker-decision` image also moved `sysinfo` caller
+selection into the per-container proc worker. A 256Mi L1 test Pod returned its
+cgroup limit for a process named `free`, while the same binary under another
+name received the host kernel value. L0 revision 17 and L1 revision 48 share
+one digest; the three L2 probes recovered after the outer runtime update.
+
+TAPD `1162789787001016333` now has one repository and OCI runtime binary,
+annotation-controlled FS and ticker, and a manager with separate proc, FUSE
+repair, and ticker worker processes. Registered containers have cancellable
+goroutines in the relevant workers; a container with the ticker annotation
+absent gets no ticker task. The proc worker owns container-cached virtual
+sysctl state as well as the previously migrated proc resource and syscall
+calculations. The manager retains seccomp interception, registration, write
+validation, required host operations, and ordinary FUSE callbacks as intended
+fallbacks. L0 revision 19 and L1 revision 52 run image
+`218-20261127-proc-sysctl-worker` on 218; worker restart and nested Pod checks
+are recorded in `INTEGRATION_218.md`.
+
+Separate acceptance work remains for TAPD `1162789787001016334`: the
+exact-path read and directory fast paths cover selected resources, but not
+every mounted virtual path or write operation. The `0.1.3` source Chart and
+image have not yet been published as a matched final release artifact.
+
+The 2026-11-26 Chart renders the same `w7panel-sysrunc-installer` DaemonSet
+and `installer` container in L0 and L1. Installer, admission, and the L1
+uninstall Job use one `installer.image` value; admission keeps its own workload
+name. On 218, L1 Helm revision 33 removed the obsolete admission image override
+and ran installer and admission with the same local image ID
+`sha256:20470ae06b35e732e931da78bd2e41b071a62b2657fe39abdeb2e6322e3a47c7`.
+Both were Ready, the ordinary and FS Pods were Ready, and the rootfs marker
+survived the K3s restart. This was a local image test; the later published
+recovery image completed the L1 non-systemd FS crash recovery path. The
+nested installer starts the FD broker and FS session recovery, and an actual
+FS SIGKILL on 218 restored two FUSE mounts while preserving the FS Pod
+identity. A later CKM Server recreation validated stale checkpoint cleanup
+when its old PID namespace had no surviving containers.
+The 2026-11-27 integration moved L0 and L1 to one public
+`w7panel-sysrunc:218-20261127-unified-installer` image; their installer and
+admission Pods all run digest
+`sha256:a914eec08d632265613c3554ea9706efa4407c7bdee08177588dd0dd7304420f`.
+The L0 Helm release is revision 6 and L1 is revision 38, both deployed.
+The dedicated CKM Server and L2 probes recovered after the runtime update.
+The newer `w7panel-sysrunc:218-20261127-sysinfo-worker` image is now
+running in both layers. L0 Helm revision 10 and L1 revision 43 are deployed;
+both installer and admission Pods in both layers use digest
+`sha256:30ee838b6be267e3e906c62c55df13184e34d855094bfdb2cd4b609a453fdb4c`.
+The dedicated CKM Server and FS, ordinary, and rootfs L2 probes are Ready;
+the rootfs PVC marker persisted through the L0 upgrade.
+This image continues virtual backing-file reads after short reads and reports
+short proc/sys writes as errors. It also moves the FS checkpoint to `/dev/shm`:
+the previous `/run` checkpoint could fail atomic rename on the CKM Server's
+fuse-overlayfs rootfs. A live L1 FS SIGKILL restored two FUSE mounts with the
+FS Pod UID unchanged, and the L0 upgrade plus CKM Server recreation recovered
+the three named L2 probes while retaining the rootfs PVC marker.
+The new image also delegates `sysinfo` cgroup memory calculation to the proc
+worker. A 218 FS Pod limited to 256Mi returned `268435456` bytes from
+`sysinfo`, matching `memory.max`; the disposable probe Pod was removed.
+The L1 revision 34 local image adds a registered proc worker read for
+`/proc/slabinfo`. The 218 nested user namespace cannot read its backing file,
+so the live check verified the unchanged `EACCES` fallback and other Pod
+health, while successful worker reads still need an accessible environment.
+L1 revision 35 adds plain-read snapshots for four IPVS virtual sysctls only
+when the backing IPVS directory exists. The 218 kernel lacks that directory;
+the live check proved it stayed absent and all ordinary, FS, and rootfs Pods
+recovered after the upgrade. IPVS read hits still require a module-enabled
+environment, and writes remain on FUSE.
+L1 revision 36 routes FUSE reads of registered read-only proc and CPU resource
+snapshots to the proc worker, retaining local handler fallback. A nonblocking
+open probe in 218 proved the FUSE-mounted meminfo and CPU online paths reached
+the worker through the actual FUSE callback; their values were readable and
+the three named L2 Pods were Ready after the upgrade. Writable sysctl state
+and ordinary FUSE callbacks still live in the manager. The later recovery2
+image passed the L1 FS SIGKILL test described above.
+On 2026-11-27, the old 218 CKM controller reconciled the dedicated Sysrunc
+Server back to an unusable template without its rootfs annotation and native
+snapshotter. The already committed CKM source passed focused tests; its CCR
+test image `w7panel-ckm:218-20261127-sysrunc-reconcile` was deployed to the
+218 controller. Reconciliation restored the intended template, the Server
+became Ready, and the FS, ordinary, and rootfs probes recovered with their
+PVCs intact. The renewed meminfo probe confirmed memfd versus FUSE FD targets
+and a worker-backed FUSE read. See `INTEGRATION_218.md` for digest and details.
+The follow-up CKM controller image
+`w7panel-ckm:218-20261127-sysrunc-snapshotter-reconcile` repairs
+`K3S_SNAPSHOTTER=native` on every Sysrunc reconcile, even without a runtime
+class change. A live 218 overlayfs drift injection was corrected; the CKM
+Server, FS and ordinary probes, and rootfs probe returned Ready with the
+rootfs PVC marker intact.
+
 This repository contains the Kubernetes runtime, FS service, IPC,
 admission webhook, snapshotter, chart, and deployment scripts in one tree. The
 root `go.work` resolves the local modules. `make build` produces one OCI runtime
@@ -9,6 +122,14 @@ The FS Makefile resolves IPC, library, and runc nsenter dependencies from this
 repository; `make -C fs sysrunc-fs` passes.
 
 ## Current 218 source integration, 2026-11-25
+
+The 2026-11-26 follow-up tested registered virtual directory `getdents64`
+fast paths and moved pressure plus CPU online/present rendering to the proc
+worker. In the dedicated CKM, 21 directories recorded direct seccomp hits;
+five resource files returned worker-backed memfds. The random-directory
+cursor and relative-path probe, L2 status checks, HTTP, and same-image Helm
+reapply passed. This remains a local image integration result; see
+`INTEGRATION_218.md` for image and binary hashes.
 
 The isolated CKM `k3k-console-164315/ckm-sysrunc-it-1123` now runs its L0
 Server on `sysrunc` with `hostUsers:false` and without an L0 FS annotation.
@@ -91,22 +212,94 @@ created.
 
 ## Remaining TAPD acceptance gaps
 
-- The proc worker serves UUID, cpuinfo, diskstats, swaps, meminfo, uptime, and stat.
+- The proc worker serves UUID, cpuinfo, diskstats, swaps, meminfo, uptime, stat,
+  slabinfo,
+  pressure, CPU online/present, and five global read-only kernel values.
   The meminfo and uptime paths passed source tests and isolated 218 L2 probes.
   The ticker worker now owns cgroup sampling and loadavg calculation for
   containers with `sysrunc.io/ticker=true`; default-off containers still use
   the local handler. Writable proc sysctls and most FUSE handling
   remain in the manager. The FUSE worker handles repair requests, while normal FUSE
   requests remain in the manager.
+  The proc worker now receives post-start creation-time updates, and graceful
+  restart re-registers restored containers with their saved ticker opt-in.
+  New FUSE mountpoint directories are created by the FUSE worker; a worker
+  failure now fails pre-registration and rolls back the container and netns
+  state. Removal still has a local fallback. The manager still owns the
+  kernel FUSE connection and normal request callbacks.
+  These lifecycle changes passed source tests and the isolated 218 revision 22
+  image. Killing the FUSE worker restarted it, and a newly created FS Pod
+  remained Ready. FUSE repair commands now run inside the registered
+  container's cancellable goroutine. A later 218 outer-node systemd restart
+  produced disconnected FUSE mounts; the worker repaired two container
+  mounts after roughly 45–60 seconds, with two successes and zero failures.
+  The disposable FS Pod kept its UID and zero restarts, and proc reads
+  recovered after the mount device changed. Existing open descriptors still
+  needed reopening. The disposable Pod was removed afterwards.
+  TAPD story `1162789787001016333` specifically assigns FUSE *self-healing*
+  to that worker, while normal FUSE fallback can remain in the manager.
+  Remaining proc virtualization and lifecycle coverage still need auditing
+  before calling the worker split complete.
+  A later 218 fault injection paused the FUSE worker during a new FS Pod's
+  pre-registration. The supervisor restarted that worker and the Pod became
+  Ready; an existing FS Pod's ten `/proc/meminfo` reads completed in 4–7 ms.
+  This verifies worker isolation and restart after a stalled worker, not a
+  real FUSE mount repair fault.
+  A real 218 manager SIGKILL disconnected existing L2 FUSE mounts. The nested
+  installer restarted FS, but existing proc reads returned ENOTCONN and the
+  restarted daemon did not recognize old seccomp notifications. Its nested
+  launcher does not enable session recovery, which currently relies on a
+  systemd FD store for listener continuity. A K3s restart and recreation of
+  two Never-policy test Pods restored the isolated CKM; the rootfs PVC marker
+  survived. This remains an unpassed manager-crash robustness case; the TAPD
+  worker requirement concerns FUSE self-healing work, and does not explicitly
+  require retaining existing mounts after a manager SIGKILL.
+  The manager-to-worker protocol now matches replies by request ID; reads
+  and FUSE repairs can run concurrently across registered containers within
+  one worker process. A source test holds one FUSE container's repair while
+  another completes, and the race test passes. The complete local image
+  passed the isolated 218 revision 30 smoke checks. This does not resolve
+  FS manager crash recovery or the remaining manager-owned FUSE callbacks.
+  A follow-up closed-response-stream guard passed the race test and ran as
+  the final local image in isolated 218 revision 31; installer and admission
+  image IDs matched, FS and rootfs smoke checks passed.
 - The existing container-aware `/proc/pressure/{cpu,io,memory}` and
   `/sys/devices/system/cpu/{online,present}` handlers, plus the two read-only
   `/proc/sys/kernel/{cap_last_cap,ngroups_max}` entries, now have exact-path,
   plain-read seccomp notify fast paths. They use read-only memfd snapshots;
   masked paths and unsupported flags retain their original kernel or FUSE
   handling. A local image passed 218 L2 repeated-read and fallback probes.
+- Twenty-two world-readable writable sysctls under `/proc/sys/{kernel,fs,net,vm}`
+  now have plain-read snapshots from their existing container handlers. Write
+  opens still use FUSE. Owner-only files remain on FUSE. Hostname and
+  domainname now resolve in the requesting process's namespace before being
+  cached; the previous FUSE hostname incorrectly exposed the inner-agent
+  hostname. The namespace fix and direct read path passed dedicated 218 L2
+  probes. The earlier twenty paths also returned
+  `memfd:sysrunc-*`. In the nested agent the host
+  `/proc/sys/net/core/default_qdisc` file is absent. Its FUSE handler now
+  keeps a per-container `fq_codel` default and accepts validated container-only
+  writes in that case; a source test covers read, write, and invalid values.
+  Three legacy `/proc/sys/net/ipv4/neigh/default/gc_thresh{1,2,3}` files
+  are likewise absent in the nested kernel; their virtual handlers now keep
+  per-container defaults of 128, 512, and 1024. Revision 24 on 218 confirmed
+  read-only seccomp memfds for all three. The owner-only
+  `/sys/module/nf_conntrack/parameters/hashsize` could not read its host
+  backing from the nested user namespace. Revision 25 confirmed its FUSE
+  handler reads the equivalent `nf_conntrack_buckets` value into a container
+  cache, while a non-root process remains denied by its `0600` mode.
+  The virtual neighbor directory previously labeled its three threshold
+  files as directories in `getdents64`; revision 27 on 218 confirmed their
+  `d_type` changed from `DT_DIR` to `DT_REG` after correcting handler metadata.
+  Four owner-only virtual files now have plain-read memfd fast paths gated
+  on the tracee filesystem UID matching the FUSE root owner. The injected
+  descriptors preserve modes 0600 or 0400; other users remain on the FUSE
+  permission path. Revision 32 on 218 confirmed memfd reads by root and
+  denial for `nobody` on all four. The L2 `/proc/sys` mount is read-only, so
+  write-open behavior was not exercised there.
 - `openat`/`openat2` and `statx` are intercepted for selected proc resources.
-  `getdents64` is served directly for the exact `/proc/sys/kernel/random`
-  directory while the original FUSE fd remains in the tracee. Other
+  `getdents64` is served directly for registered virtual `/proc` and `/sys`
+  directories while the original FUSE fd remains in the tracee. Unregistered
   directories retain the kernel/FUSE path. Injecting a host directory fd was
   rejected after a relative `../hostname` escape test.
 - The FS protocol source, generated file, and primary gRPC service now use
@@ -129,8 +322,11 @@ for containers that opt in. The ticker worker samples cgroup tasks, computes
 load averages, and releases its samplers when a container unregisters. The proc worker handles UUID reads through one
 goroutine per registered container and rejects reads after unregister. It also
 computes `/proc/cpuinfo`, `/proc/diskstats`, `/proc/swaps`, `/proc/meminfo`,
-`/proc/uptime`, and `/proc/stat` for the seccomp fast path using
-that container's cgroup view. The FUSE repair worker handles mount repair
+`/proc/uptime`, `/proc/stat`, `/proc/slabinfo`, `/proc/pressure/{cpu,io,memory}`, and
+`/sys/devices/system/cpu/{online,present}` for the seccomp fast path using
+that container's cgroup view. It also calculates the memory fields for
+intercepted `sysinfo` calls; seccomp notification and tracee memory writing
+stay in the manager. The FUSE repair worker handles mount repair
 requests. The FS process still owns
 most virtual proc and FUSE request handling, the FUSE descriptor store, and
 seccomp listener handling. These paths have not yet been isolated into their
@@ -139,7 +335,7 @@ respective workers.
 FS handles `openat` and `openat2` notifications for the worker-backed
 `/proc/sys/kernel/random/uuid` file. It injects a memfd with `NOTIF_ADDFD`,
 so reads of that fd avoid FUSE. Directory opens retain the FUSE fd, but the
-exact random directory's `getdents64` uses the same byte-offset cookies and
+registered virtual directories' `getdents64` use the same byte-offset cookies and
 shared cursor through seccomp notify. Injecting a host proc directory fd would
 allow subsequent relative paths such as `../hostname` to escape the virtual
 view, so the fast path never replaces it. Relative `uuid` opens from
@@ -148,26 +344,27 @@ for the two exact paths write proc metadata into caller memory, preserving
 the virtual UUID file's size and mode.
 `NOTIF_ADDFD` cannot supply buffers for `statx` or `getdents64`.
 
-Seven exact read-only proc mounts (`cpuinfo`, `diskstats`, `meminfo`, `stat`,
-`swaps`, `uptime`, and `loadavg`) now reuse their existing container-aware
+Eight exact read-only proc mounts (`cpuinfo`, `diskstats`, `meminfo`, `stat`,
+`slabinfo`, `swaps`, `uptime`, and `loadavg`) now reuse their existing container-aware
 handlers directly from the seccomp notification path. Each open receives a
 sealed, read-only memfd, and `statx` returns the virtual mode and size without
 entering FUSE. Other flags and paths retain the FUSE fallback. In a nested user
-namespace, the host's `/proc/slabinfo` cannot be read; it remains on the FUSE
-path and reports `EACCES` instead of an opaque I/O error.
+namespace, the host's `/proc/slabinfo` cannot be read; its worker attempt
+falls back to FUSE and reports `EACCES` instead of an opaque I/O error.
 
 Other paths and unsupported flags continue to the kernel and retain their
 original FUSE behavior where mounted. Masked proc and sys paths, invalid
 `openat2` modes or structure sizes, and
 injection failures also fall back. Read-path notifications are installed only
 where they preserve the OCI seccomp profile's existing allow rules. The
-remaining mounted proc resources, especially writable `/proc/sys` files and
-their directories, still need direct backing providers before their FUSE path
-can be bypassed safely.
+remaining mounted proc resources, especially writes to virtual `/proc/sys`
+files and owner-only virtual sysfs files, still need direct backing and access
+checks before their FUSE path can be bypassed safely.
 
-The new runtime bridges registration and seccomp notifications into FS, but
-the original full `sysbox-runc` `syscont.ConvertSpec` and other system-container
-behavior have not been ported. The admission webhook leaves `hostUsers`
+The new runtime bridges registration and seccomp notifications into FS.
+System-container capability, AppArmor, and `/proc` OCI spec conversion have
+been restored for nested containers, including exec processes; full Sysbox
+behavior parity remains to be audited. The admission webhook leaves `hostUsers`
 unchanged for FS-enabled Pods using the new `sysrunc` RuntimeClass; its legacy
 `sysbox-runc` path still requires `hostUsers: false`. Persistent special directories are handled only by the
 snapshotter and runc when a rootfs rw-layer is configured. FS-enabled system

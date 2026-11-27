@@ -10,6 +10,7 @@ enter_pid_ns="${SYSRUNC_INNER_ENTER_PID_NS:-false}"
 config_template="${K3S_CONTAINERD_CONFIG_TEMPLATE:-/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.tmpl}"
 fs_mountpoint="${SYSRUNC_INNER_FS_MOUNTPOINT:-/var/lib/sysruncfs-inner}"
 snapshotter_socket="${SYSRUNC_INNER_SNAPSHOTTER_SOCKET:-/run/sysrunc/sysrunc-snapshotter.sock}"
+broker_socket="${SYSRUNC_INNER_FD_BROKER_SOCKET:-/run/sysrunc/fd-broker.sock}"
 snapshotter_root="${SYSRUNC_INNER_SNAPSHOTTER_ROOT:-/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.sysrunc}"
 containerd_socket="${K3S_CONTAINERD_SOCKET:-/run/k3s/containerd/containerd.sock}"
 pause_image="${K3S_PAUSE_IMAGE:-rancher/mirrored-pause:3.6}"
@@ -143,6 +144,9 @@ stop_daemon() {
 		for proc in /proc/[0-9]*; do
 			[ -e "$proc/exe" ] || continue
 			[ "$(basename "$(readlink "$proc/exe" 2>/dev/null || true)" | sed "s/ (deleted)$//")" = "$3" ] || continue
+			# The broker uses the same executable but must outlive an FS
+			# manager replacement.
+			if [ "$3" = sysrunc-fs ] && tr "\000" " " <"$proc/cmdline" | grep -Fq -- --fd-broker; then continue; fi
 			[ "$(readlink "$proc/ns/mnt" 2>/dev/null || true)" = "$target_mnt" ] || continue
 			[ "$(readlink "$proc/ns/net" 2>/dev/null || true)" = "$target_net" ] || continue
 			kill "${proc##*/}" 2>/dev/null || true
@@ -151,8 +155,25 @@ stop_daemon() {
 	' "$socket" "$pidfile" "$expected"
 }
 
+stop_broker() {
+	runtime_shell '
+		target_mnt=$(readlink /proc/1/ns/mnt)
+		target_net=$(readlink /proc/1/ns/net)
+		for proc in /proc/[0-9]*; do
+			[ -e "$proc/exe" ] || continue
+			[ "$(basename "$(readlink "$proc/exe" 2>/dev/null || true)" | sed "s/ (deleted)$//")" = sysrunc-fs ] || continue
+			tr "\000" " " <"$proc/cmdline" | grep -Fq -- --fd-broker || continue
+			[ "$(readlink "$proc/ns/mnt" 2>/dev/null || true)" = "$target_mnt" ] || continue
+			[ "$(readlink "$proc/ns/net" 2>/dev/null || true)" = "$target_net" ] || continue
+			kill "${proc##*/}" 2>/dev/null || true
+		done
+		rm -f "$1"
+	' "$broker_socket"
+}
+
 if [ "${1:-}" = "--stop-daemons" ]; then
 	stop_daemon /run/sysrunc/sysfs.sock /run/sysrunc/sysfs.pid sysrunc-fs
+	stop_broker
 	stop_daemon "$snapshotter_socket" /run/sysrunc/sysrunc-snapshotter.pid sysrunc-snapshotter
 	runtime_shell '
 		i=0
@@ -414,6 +435,17 @@ managed_pids=
 managed_sockets=
 start_full_daemons="${SYSRUNC_INNER_START_DAEMONS:-true}"
 if [ "$start_full_daemons" = "true" ]; then
+	if ! socket_is_live "$broker_socket"; then
+		if daemon_is_live /run/sysrunc/sysfs.sock /run/sysrunc/sysfs.pid sysrunc-fs; then
+			die "FD broker disappeared while FS is live; restart CKM K3s before replacing the broker"
+		fi
+		runtime_shell 'rm -f "$1"' "$broker_socket"
+		start_runtime_daemon "$bin_dir/sysrunc-fs" --fd-broker "$broker_socket" >"$log_dir/sysrunc-fd-broker.log" 2>&1 &
+		pid=$!
+		managed_pids="$managed_pids $pid"
+		managed_sockets="$managed_sockets $broker_socket"
+		wait_for_socket "$pid" "$broker_socket" "$log_dir/sysrunc-fd-broker.log"
+	fi
 	if ! daemon_is_live /run/sysrunc/sysfs.sock /run/sysrunc/sysfs.pid sysrunc-fs; then
 		stop_daemon /run/sysrunc/sysfs.sock /run/sysrunc/sysfs.pid sysrunc-fs
 	fi
@@ -425,7 +457,7 @@ if ! daemon_is_live /run/sysrunc/sysfs.sock /run/sysrunc/sysfs.pid sysrunc-fs; t
 	if [ "$start_full_daemons" != "true" ]; then
 		:
 	else
-	start_runtime_daemon "$bin_dir/sysrunc-fs" --mountpoint "$fs_mountpoint" >"$log_dir/sysrunc-fs.log" 2>&1 &
+	SYSRUNC_FD_BROKER_SOCKET="$broker_socket" start_runtime_daemon "$bin_dir/sysrunc-fs" --session-recovery --mountpoint "$fs_mountpoint" >"$log_dir/sysrunc-fs.log" 2>&1 &
 	pid=$!
 	managed_pids="$managed_pids $pid"
 	managed_sockets="$managed_sockets /run/sysrunc/sysfs.sock"

@@ -17,15 +17,18 @@
 package fuse
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	_ "bazil.org/fuse/fs/fstestutil"
 
-	"github.com/w7panel/sysrunc/fs/domain"
 	"github.com/sirupsen/logrus"
+	"github.com/w7panel/sysrunc/fs/domain"
 )
 
 type FuseServerService struct {
@@ -38,6 +41,42 @@ type FuseServerService struct {
 	css          domain.ContainerStateServiceIface // containerState service pointer
 	ios          domain.IOServiceIface             // i/o service pointer
 	hds          domain.HandlerServiceIface        // handler service pointer
+	mountWorker  interface {
+		PrepareMountpoint(context.Context, string) error
+		RemoveMountpoint(context.Context, string) error
+	}
+}
+
+func (fss *FuseServerService) SetMountpointWorker(w interface {
+	PrepareMountpoint(context.Context, string) error
+	RemoveMountpoint(context.Context, string) error
+}) {
+	fss.mountWorker = w
+}
+
+func (fss *FuseServerService) prepareMountpoint(path string) error {
+	if fss.mountWorker != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err := fss.mountWorker.PrepareMountpoint(ctx, path)
+		cancel()
+		return err
+	}
+	// Recovery restores existing FUSE mounts before the worker supervisor is
+	// started. Runtime registrations always have a worker at this point.
+	return fss.ios.NewIOnode("", path, 0600).MkdirAll()
+}
+
+func (fss *FuseServerService) removeMountpoint(path string) error {
+	if fss.mountWorker != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err := fss.mountWorker.RemoveMountpoint(ctx, path)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		logrus.Warnf("FUSE worker mountpoint removal failed, retrying locally: %v", err)
+	}
+	return os.Remove(path)
 }
 
 // FuseServerService constructor.
@@ -105,9 +144,8 @@ func (fss *FuseServerService) CreateFuseServer(serveCntr, stateCntr domain.Conta
 
 	// Create required mountpoint in host file-system.
 	cntrMountpoint := filepath.Join(fss.mountPoint, cntrId)
-	mountpointIOnode := fss.ios.NewIOnode("", cntrMountpoint, 0600)
-	if err := mountpointIOnode.MkdirAll(); err != nil {
-		return errors.New("FuseServer with invalid mountpoint")
+	if err := fss.prepareMountpoint(cntrMountpoint); err != nil {
+		return fmt.Errorf("prepare FUSE mountpoint %s: %w", cntrMountpoint, err)
 	}
 
 	srv := NewFuseServer(
@@ -177,7 +215,7 @@ func (fss *FuseServerService) DestroyFuseServer(cntrId string) error {
 
 	// Remove mountpoint dir from host file-system.
 	cntrMountpoint := filepath.Join(fss.mountPoint, cntrId)
-	if err := os.Remove(cntrMountpoint); err != nil {
+	if err := fss.removeMountpoint(cntrMountpoint); err != nil {
 		logrus.Errorf("FuseServer mountpoint could not be eliminated for container id %s",
 			cntrId)
 		return nil

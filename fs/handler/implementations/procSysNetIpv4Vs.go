@@ -201,9 +201,14 @@ func (h *ProcSysNetIpv4Vs) ReadDirAll(
 	var fileEntries []os.FileInfo
 
 	// Iterate through map of virtual components.
-	for k, _ := range h.EmuResourceMap {
+	for k, resource := range h.EmuResourceMap {
+		if !resource.Enabled {
+			continue
+		}
 		info := &domain.FileInfo{
 			Fname:    k,
+			Fmode:    resource.Mode,
+			Fsize:    resource.Size,
 			FmodTime: time.Now(),
 		}
 

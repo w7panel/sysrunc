@@ -175,6 +175,10 @@ func (css *containerStateService) ContainerPreRegister(id, netns string) error {
 
 	err := css.fss.CreateFuseServer(cntr, stateCntr)
 	if err != nil {
+		delete(css.idTable, cntr.id)
+		if cntr.netnsInode != 0 {
+			_ = css.untrackNetns(cntr)
+		}
 		css.Unlock()
 		logrus.Errorf("Container pre-registration error: unable to initialize fuseServer for container %s: %s",
 			formatter.ContainerID{id}, err)

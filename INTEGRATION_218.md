@@ -1330,3 +1330,671 @@ FS 或 L0 新运行时验收。
   FS/nginx/rootfs 三个 Pod 的 HTTP 均返回 200，webroot、`/srv/data` 和
   rootfs 持久标记保留。L0 两个 `disk-default` Longhorn PVC 仍为 Bound；
   本轮未重建对应测试 Pod。
+
+## 2026-11-26 虚拟目录 getdents64 与 proc worker 源码集成
+
+- 在专用 CKM `k3k-console-164315/ckm-sysrunc-fresh-1125` 的 L1
+  `default/w7panel-sysrunc` release 测试本地镜像
+  `sysrunc-it:218-20261126-virtualdirs-log`，镜像 ID 为
+  `sha256:72897973d9f9d3aabf3bec4afd17f4f383c1e5b4cd5ef9be13075602a555a92a`。
+  revision 12 `deployed`；运行中 FS SHA256
+  `0be183d348585f20c872cfe2608b897346040e7b39f63996746a0312ee44712a`
+  与本地构建一致。镜像只导入 L1 containerd，未推送 CCR 或发布 Chart。
+- FS Pod 重建后，直接读取 24 个注册目录：21 个目录的 FS 日志各记录一次
+  `getdents64 fast path served`，覆盖 `/proc/sys` 下的虚拟目录、
+  `/sys/kernel` 及其子目录、`/sys/devices/virtual/dmi` 与 `id`、
+  `/sys/module/nf_conntrack/parameters`。`/proc/sys/net/ipv4/vs` 在该
+  内核中不存在；`/proc/pressure` 是原生 procfs 目录，无 FUSE 需要绕过；
+  `/sys/devices/virtual` 下的 `powercap` 被 OCI mask，故保留 FUSE 回退。
+  另建的无 mask 测试 Pod `sysrunc-dir-unmasked-1126` 因 Kubernetes 要求
+  `hostUsers:false`，在内层创建 sandbox 时被 `fork/exec /proc/self/exe:
+  operation not permitted` 阻止；没有到达目录读取，该 Pod 已删除。
+  因此 `/sys/devices/virtual` 的无 mask 快路径本轮未验收。
+  旧 random 目录的直接探针通过 224 字节遍历、32 字节分段、共享游标、
+  rewind、相对 `../hostname` 的 FUSE 边界以及 UUID memfd。
+- `/proc/pressure/{cpu,io,memory}` 和
+  `/sys/devices/system/cpu/{online,present}` 的五个只读打开均返回
+  `memfd:sysrunc-*`；pressure 内容非空，CPU 范围为 `0-7`。
+  FS 与普通 L2 Pod 的 `check-status.sh` 均通过，CRI sandbox 均为
+  `sysrunc/SANDBOX_READY`。nginx 和 rootfs HTTP 正常，
+  `/root/rootfs-marker-1125` 保留；FS 日志无 panic、fatal、OOM、ENOMEM。
+- 相同镜像与 Chart 重施到 revision 13 后，L0 CKM Server UID
+  `1cae35d4-4f5a-4d3b-be20-4a3af4affe6e`、K3s 重启次数 5，
+  FS、普通和 rootfs Pod UID 分别为
+  `fffc712d-b902-4ea2-861c-064d9537da02`、
+  `00b9fc35-5c82-44d2-b3f1-6ef36c957c1c`、
+  `ff28c9e4-4e24-442c-9d56-e333f40f4116`，均未变化。
+  镜像变更时两个 `restartPolicy: Never` Pod 变为 Unknown，已按原清单
+  仅重建这两个 Pod；PVC 未删除。本轮未复测 L0 Longhorn `disk-default`。
+
+## 2026-11-26 可写 sysctl 的只读快路径续测
+
+- 测试镜像 `ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc:it-218-20261126-sysctl-read`
+  已推送，OCI digest 为
+  `sha256:299e819b981ef6db471a008326a4f78c0c728442d02d36cb4c4843f40e0a1161`。
+  专用 CKM 的 L1 `default/w7panel-sysrunc` release revision 15 为
+  `deployed`，inner-agent 运行镜像 ID 匹配该 digest。首次带 `--wait`
+  升级时 K3s 重启使端口转发断开，revision 14 留在 `pending-upgrade`；
+  对 revision 14 执行 Helm rollback 后 revision 15 恢复为 `deployed`。
+- 两个 `restartPolicy: Never` 的 FS、nginx 测试 Pod 在 K3s 重启后为
+  `Unknown`，从保存的清单仅重建这两个 Pod，随后均为 Ready。
+  在 FS Pod 内读取十五个候选路径，其中十四个打开后的描述符为
+  `memfd:sysrunc-*`；`/proc/sys/net/core/default_qdisc` 仍走 FUSE，
+  且直接 `cat` 返回 `EINVAL`。源码已将它从新快路径清单移除；
+  此镜像在该路径实际回退 FUSE，因此未把它计入十四条通过项。
+- FS Pod 的 `/proc/sys` 挂载为只读，`O_RDWR` 打开
+  `/proc/sys/kernel/panic` 返回 `EROFS`；本轮不能在该 Pod 验证写入后的
+  容器数据一致性。普通 FUSE 请求与描述符仍由 manager 持有，
+  FUSE worker 仅处理挂载自愈，这轮没有完成进程拆分。
+
+## 2026-11-26 `default_qdisc` 与 netfilter 快路径续测
+
+- 本地构建并推送测试镜像
+  `ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc:it-218-20261126-sysctl-netfilter`，
+  digest 为 `sha256:ed545df066ee54a59aad62f137b2e3c337d5d7d8fa3975e90119007a4a85d486`。
+  专用 CKM 的 L1 `default/w7panel-sysrunc` revision 16 为 `deployed`；
+  inner-agent 的实际 imageID 与该 digest 一致。
+- L1 FS Pod 内重新检查二十条 `/proc/sys` 精确路径，二十个描述符均为
+  `memfd:sysrunc-*`，无打开失败。`default_qdisc` 返回 `fq_codel`；
+  五个 netfilter 文件分别返回非空数值。此前 218 内层 agent 上的宿主
+  `default_qdisc` 文件不存在，原 FUSE 读取报 `EINVAL`；当前源码在宿主
+  缺失时提供容器内默认值，并以单测验证容器内写入、非法值拒绝。
+- 更新触发 L1 K3s 重启，L0 专用 CKM Server 恢复 2/2 Ready；FS 与 nginx
+  两个 `restartPolicy: Never` 测试 Pod 从保存清单重建后均为 1/1 Running，
+  其余 rootfs、特殊目录和普通 Pod 均恢复 Running。FUSE worker 的正常
+  请求、状态和描述符交接尚未实现，本轮不构成完整 FS 进程拆分验收。
+  随后源码增加的 proc worker 创建时间同步与恢复注册尚未打入此测试镜像。
+
+## 2026-11-26 FUSE worker 生命周期与 UTS 虚拟值续测
+
+- 本地测试镜像 `sysrunc-it:218-20261126-uts-memfd`（image ID
+  `sha256:40c1bf339b1effcd4843a96390ac9d2b45dded5d518533c3d5b77221cbd51155`）
+  导入专用 CKM 的 L1 containerd；L1 `default/w7panel-sysrunc` revision 19
+  为 `deployed`。镜像未推送 CCR，也未发布 Chart。运行中 FS 主进程和
+  proc、FUSE、ticker worker 均存在；FS 二进制本地 SHA256 为
+  `612b45fdcbbf3c1af0fde5375f6c65aade26ebf6793c1d2400a95f4569c5011f`。
+- revision 17 首次验证 FUSE worker 预注册重放：强制终止 FUSE worker 后，
+  supervisor 约一秒内启动新进程；随后重建 FS Pod，Pod Ready，
+  `/proc/sys/net/core/default_qdisc` 和 netfilter 等文件仍返回 memfd。
+  预注册失败时仅撤销待注册状态，不删除已注册容器；对应源码测试通过。
+- 发现旧 FUSE `/proc/sys/kernel/hostname` 返回 inner-agent 主机名，
+  与 FS Pod 的 `hostname` 不一致。revision 18 将 hostname、domainname
+  首次读取改为进入请求进程的命名空间；新建 FS Pod 的 hostname 文件
+  与 `hostname` 命令一致，domainname 为 `(none)`。revision 19 再将这两条
+  世界可读文件接入只读 memfd 快路径：描述符分别为
+  `memfd:sysrunc-hostname` 和 `memfd:sysrunc-domainname`，内容仍正确。
+  写打开继续走 FUSE；仅所有者可读的 sysfs 文件没有绕过权限检查。
+- 镜像更新导致 K3s 重启，两个 `restartPolicy: Never` 测试 Pod 变为
+  `Unknown`。按保存清单只重建这两个 Pod，PVC 未删除；FS、普通、rootfs、
+  特殊目录测试 Pod，inner-agent 与 admission 均为 Running。普通 FUSE
+  请求及内核连接仍由 manager 持有，worker 完整进程拆分尚未验收。
+
+## 2026-11-26 FUSE 挂载点归属续测
+
+- 本地测试镜像 `sysrunc-it:218-20261126-worker-strict`，image ID
+  `sha256:9e527e68bb7d4f7ff88869197cc8421b8c5a6708f8ecef819b17dd99beaf0b84`，
+  导入专用 CKM 的 L1 containerd；L1 `default/w7panel-sysrunc` revision 20
+  为 `deployed`。镜像未推送 CCR，也未发布 Chart。
+- 新注册容器的 FUSE 挂载点必须由 worker 创建；worker 返回错误时 manager
+  不再悄悄本地创建。容器状态服务同时回滚失败预注册的 ID 和 netns 跟踪。
+  `go test ./fs/...` 和完整构建通过。
+- 镜像变更导致内层 K3s 重启；仅从保存清单重建两个变为 `Unknown` 的
+  `restartPolicy: Never` 测试 Pod，PVC 未删。强制终止 FUSE worker 后，
+  supervisor 启动新 worker；再次重建 FS Pod 仍为 Ready，hostname、
+  `default_qdisc`、UUID 三条只读快路径返回正确的 memfd 内容。rootfs、
+  特殊目录和普通 Pod 均 Running。正常 FUSE 请求与内核连接仍在 manager。
+
+## 2026-11-26 每容器 FUSE 自愈任务续测
+
+- TAPD `1162789787001016333` 指定 FUSE worker 处理“自愈”，并要求随容器
+  生命周期创建、停止 goroutine。原自愈函数在 worker 全局命令循环中运行，
+  每容器 FUSE goroutine 仅等待取消。本轮把修复请求分派给已注册容器的
+  goroutine；未注册和已注销容器的请求直接报错，源码测试覆盖这三种状态。
+- 本地镜像 `sysrunc-it:218-20261126-fuse-per-container`，image ID
+  `sha256:6239515853d7d55091cec60fc6deb55730cd8c21562be3eca530286a66a23e12`，
+  导入专用 CKM 的 L1 containerd；L1 `default/w7panel-sysrunc` revision 21
+  为 `deployed`。运行中的 FS 二进制 SHA256
+  `e7fe24f6a63b91c40d9a7c821919eeae4356d07978e2bef9aa7c9722037cca3b`
+  与本地构建一致。未推送 CCR 或发布 Chart。
+- 更新触发内层 K3s 重启，只重建两个 `restartPolicy: Never` 测试 Pod，
+  PVC 未删。FS、普通、rootfs、特殊目录 Pod 及 inner-agent、admission
+  均 Running；proc、FUSE、ticker worker 进程存在。本轮没有人为触发
+  内核 FUSE 故障；修复命令分派由源码测试验证，218 仅验证运行集成。
+
+## 2026-11-26 全局只读 proc 路径续测
+
+- 本地镜像 `sysrunc-it:218-20261126-proc-global`，image ID
+  `sha256:b348d9b042c33ff4c344809b44c94854e8ba4bbacb723e3fb4c44e03496b0999`，
+  导入专用 CKM 的 L1 containerd；L1 `default/w7panel-sysrunc` revision 22
+  为 `deployed`。运行中 FS 二进制 SHA256
+  `55cce0a7ce8ed2dfe3094ce6a1bb50495cdb3aab2e6173856731f72906563c7e`
+  与本地构建一致。未推送 CCR 或发布 Chart。
+- 五个全局只读 `/proc/sys/kernel` 值由 proc worker 的容器 goroutine
+  提供给直接读取路径：`cap_last_cap`、`ngroups_max`、`ostype`、
+  `osrelease`、`version`。218 FS Pod 内五条描述符均为 memfd，读值
+  分别符合当前内核；源码测试覆盖 worker 注册、读取和注销后的拒绝。
+- 升级触发内层 K3s 重启，按保存清单仅重建两个 `restartPolicy: Never`
+  测试 Pod，PVC 未删。FS、普通、rootfs、特殊目录 Pod 与 inner-agent、
+  admission 均 Running。其余可写 proc sysctl 的处理器仍使用 manager
+  的共享容器数据，尚未整体迁入 proc worker。
+## 2026-11-26 Chart 安装器同名与 IPv4 快路径验证
+
+- Chart 的 `host` 与 `nested` 模式均渲染 DaemonSet
+  `w7panel-sysrunc-installer`、容器 `installer`，均使用
+  `installer.image`；两个模式的 `helm lint` 通过。内层卸载 hook
+  同时清理新名称与旧的 `w7panel-sysrunc-inner-agent`。
+- 218 专用 CKM L1 `default/w7panel-sysrunc` 升至 revision 23，installer
+  与 admission 均使用本地测试镜像
+  `docker.io/library/sysrunc-it:218-20261126-ipv4-fastpath`
+  (`sha256:a4bdf162df84940fe7ebec900d20942c1730973143bdc4c7973d104668853299`)。
+  新 installer DaemonSet 1/1 Ready，旧 inner-agent DaemonSet 已删除，
+  admission 1/1 Ready。
+- K3s 重启后重建 FS 与普通测试 Pod，均 1/1 Running。FS Pod 读取
+  `/proc/sys/net/ipv4/ping_group_range` 和
+  `/proc/sys/net/ipv4/ip_unprivileged_port_start` 分别返回
+  `/memfd:sysrunc-ping_group_range` 与
+  `/memfd:sysrunc-ip_unprivileged_port_start`，内容分别为
+  `65534\t65534` 与 `0`。
+- 原 rootfs Pod 在 K3s 重启后持续报 `sysbox sidecar oci spec ambiguous`，
+  按原始 Pod 清单重建同名 Pod 后 2/2 Running，根文件系统标记
+  `/root/rootfs-marker-1125` 仍为 `rootfs-1125-persist`；PVC 保持 Bound。
+
+## 2026-11-26 邻居阈值虚拟文件补全
+
+- 旧镜像的 FS Pod 显示 `/proc/sys/net/ipv4/neigh/default/gc_thresh{1,2,3}`
+  为虚拟文件，但读取均返回 `Invalid argument`；内层宿主内核已不提供对应
+  sysctl。源码在无宿主文件时给三个文件分别初始化容器独立的
+  `128`、`512`、`1024`，并让普通只读打开命中 seccomp memfd；写打开仍交
+  FUSE 处理。源码测试覆盖初值、容器独立缓存和写后读。
+- `go test ./fs/handler/implementations ./fs/seccomp` 与 `make build` 通过。
+  本地完整镜像 `sysrunc-it:218-20261126-neigh-fastpath` 的 image ID 是
+  `sha256:248c3073d2abe38117a3e800aa73d085dd5c0c0c011a3f5e0a099ba59d54225c`，
+  已导入专用 CKM L1 containerd，未推送到远端仓库。
+- 218 L1 Helm revision 24 的 installer 1/1 Ready、admission 1/1 Ready。
+  K3s 重启后重建三个测试 Pod，FS、普通均 1/1 Running，rootfs 2/2
+  Running，rootfs 标记保留且 PVC Bound。FS Pod 的三次只读打开分别得到
+  `/memfd:sysrunc-gc_thresh{1,2,3}` 和上述数值。该 Pod 的 `/proc/sys`
+  挂载为只读，写入在到达 FUSE 前被内核拒绝；L2 写路径本轮未验证。
+
+## 2026-11-26 nf_conntrack hashsize 读取回退
+
+- 218 FS Pod 的 `/sys/module/nf_conntrack/parameters/hashsize` 原先显示
+  为 `0600` 虚拟文件，但读取返回 `Invalid argument`。内层 K3s 用户命名空间
+  将宿主模块文件映射为 `65534:65534`，L1 FS 无权读取；可读的
+  `/proc/sys/net/netfilter/nf_conntrack_buckets` 提供同一 bucket 数。
+- handler 在模块文件不存在或无权限时，从 buckets 初始化容器独立缓存；
+  保持 `0600` 文件权限，未将该路径加入 seccomp ADDFD 快路径。
+  `go test ./fs/handler/implementations ./fs/seccomp` 和 `make build` 通过。
+- 本地完整镜像 `sysrunc-it:218-20261126-hashsize-fallback` image ID
+  `sha256:ede48fa002413783bef69e2085d094703e844e1ac45a814bbd12651ee0deb1f5`
+  已导入专用 CKM L1、未推送。L1 Helm revision 25 的 installer 与
+  admission 均 1/1 Ready。K3s 重启后 FS 和普通 Pod 重建为 1/1 Running，
+  rootfs Pod 自动恢复为 2/2 Running，持久标记仍在。FS Pod 读取 hashsize
+  与 nf_conntrack_buckets 均为 `262144`，三条邻居阈值仍返回 memfd 与
+  `128`、`512`、`1024`。同一 FS Pod 中以 `nobody` 读取 hashsize 得到
+  `Permission denied`，`0600` 权限仍生效。
+- 随后修正缓存命中时仍先读取 buckets 的依赖：已有容器值时直接返回缓存。
+  定向源码测试覆盖 fallback 文件消失后的读取。最终本地镜像
+  `sysrunc-it:218-20261126-hashsize-cache` image ID
+  `sha256:6bd09407ff7c7e76505fbc2038e816444c589ac7bdaceef1244e55a511046cb7`
+  在同一专用 CKM 的 Helm revision 26 部署。K3s Server 收到安装器请求后
+  正常退出并因回退等待短暂显示 `CrashLoopBackOff`，约 103 秒后恢复 2/2
+  Running。installer、admission 均 1/1 Ready；重建的 FS、普通 Pod 均
+  1/1 Running，rootfs Pod 自动恢复 2/2 Running、PVC Bound、持久标记保留。
+  FS Pod 再次读得 hashsize 与 buckets 均为 `262144`，三个邻居阈值仍为
+  memfd 与 `128`、`512`、`1024`。
+
+## 2026-11-26 虚拟目录条目类型复验
+
+- 在 revision 26 的 FS Pod 中，直接 `getdents64` 探针读取
+  `/proc/sys/net/ipv4/neigh/default`，三个 `gc_thresh` 条目的 `d_type`
+  均为 `4` (`DT_DIR`)，而 `stat` 将其显示为普通文件。原因是该 handler
+  的 `ReadDirAll` 把所有虚拟条目固定标为目录，且后面的文件分支不可达。
+- 修正为按 `EmuResource` 的 Kind、Mode、Size 构造目录条目，并补齐
+  net/core 与 IPVS 虚拟目录的文件元数据。定向
+  `go test ./fs/handler/implementations ./fs/seccomp` 与 `make build` 通过。
+- 本地完整镜像 `sysrunc-it:218-20261126-dirent-types` image ID
+  `sha256:0069802f424f28a7dd24f9a9cad59034083ef5d16e54f4d0381330e9fa643481`
+  已导入专用 CKM L1、未推送。L1 Helm revision 27 的 installer、
+  admission 均 1/1 Ready；K3s Server 2/2 Running。重建后的 FS、普通 Pod
+  均 1/1 Running，rootfs Pod 自动恢复 2/2 Running；持久标记保留。
+  同一个直接 syscall 探针再次读取该目录，三个文件的 `d_type` 均变为
+  `8` (`DT_REG`)。三条阈值读值仍为 `128`、`512`、`1024`，hashsize 为
+  `262144`。
+
+## 2026-11-26 worker 并发与 Chart 单镜像核对
+
+- `Supervisor.request` 改为按 worker 进程分别加锁，避免等待慢 FUSE
+  回复时阻塞 proc 和 ticker；`go test ./fs/worker ./fs/cmd/sysrunc-fs`、
+  `go test -race ./fs/worker` 和 `make build` 通过。镜像
+  `sysrunc-it:218-20261126-worker-lock`（image ID
+  `sha256:3a0f255a2aebb48ce3b80e6d4e339aab3eb3f6f394d45db2479962f86ab4f6a2`）
+  已导入专用 CKM L1，未推送；Helm revision 28 已部署。
+- 218 暂停 FUSE worker 后，新 FS Pod 首次预注册失败；supervisor 重启
+  worker 后 Pod Ready。故障期间，已有 FS Pod 连续 10 次读取
+  `/proc/meminfo`，耗时均为 4–7 ms。installer、admission 均 1/1 Ready，
+  FS、普通 Pod 1/1 Running，rootfs Pod 2/2 Running，持久标记保留。
+- Chart 的 L0/L1 installer 和 admission 统一读取 `installer.image`；
+  admission 保留独立资源名。host/nested 的 `helm lint` 均通过。刻意传入
+  旧 `admission.image.tag` 时，三个镜像引用仍一致。218 外层 installer、
+  admission 目前均运行公开 CCR `v0.1.3`；专用 CKM 内层两者均运行上述
+  本地测试镜像。内层 Chart 升至 revision 29，installer 与 admission
+  均 1/1 Ready，FS 与普通 Pod 1/1 Running，rootfs Pod 2/2 Running。
+  未发布新镜像或升级外层。
+
+## 2026-11-26 内层 FS 主进程故障注入
+
+- 专用 CKM L1 revision 29、测试镜像 `218-20261126-worker-lock` 下，
+  原 FS 主进程 PID 6358。先确认 FS Pod 可读 `/proc/meminfo`，再向该
+  进程发送 SIGKILL。安装器拉起新 FS 主进程 PID 107341，三个 worker
+  也重新启动，但旧 FS Pod 读取 `/proc/sys/kernel/hostname` 和
+  `/proc/meminfo` 均返回 `Transport endpoint is not connected`；日志还
+  出现旧容器的 `unknown container` seccomp 通知。**此故障注入未通过**。
+- 内层脚本启动 FS 时没有传 `--session-recovery`；该模式的 seccomp
+  listener 保活当前依赖 systemd FD store。新进程的 socket Ready
+  无法证明已有 Pod 的旧 FUSE 挂载已修复。此问题需要保留为 worker
+  自愈验收缺口，不能把之前只暂停 FUSE worker 的成功用例当作证明。
+- 为恢复测试环境，终止并重启专用 CKM 的 K3s Server；仅删除并按保存
+  清单重建两个 `restartPolicy: Never` Pod，未删除 PVC。FS、普通 Pod
+  恢复 1/1 Running，rootfs Pod 2/2 Running；FS Pod 再次读到虚拟
+  hostname 和 meminfo，rootfs 标记仍是 `rootfs-1125-persist`。
+
+## 2026-11-26 同一 worker 的跨容器请求并发
+
+- manager 与 worker 的请求/回复增加 ID，并由 manager 单独读取回复再
+  分发给等待者。worker 对有 ID 的读取和 FUSE 修复请求并发派发到各容器
+  goroutine；因此一个容器的慢修复不再堵住同一 FUSE worker 中另一个
+  容器的请求。源码测试使第一个修复保持阻塞，确认第二个先完成；
+  `go test -race ./fs/worker`、相关 FS 包测试和 `make build` 通过。
+- 本地完整镜像 `sysrunc-it:218-20261126-worker-mux` 的 image ID 为
+  `sha256:e4052807f0bc0120594efb60e7b731a33c43b569bc9fb4a1a62a52e42d1e112f`，
+  已导入专用 CKM L1、未推送。L1 Helm revision 30 deployed，installer
+  和 admission 均 1/1 Ready，imageID 与本地一致。K3s 重启后仅重建
+  两个 Never 策略测试 Pod，PVC 未删。FS、普通 Pod 均 1/1 Running，
+  rootfs Pod 2/2 Running；FS Pod 的 meminfo、hostname 与邻居阈值
+  读取正常，rootfs 持久标记保留。
+- 218 此轮验证镜像部署和常规功能；跨容器的慢请求顺序由源码测试
+  验证。FS 主进程异常退出后的旧挂载恢复仍未通过。
+- 随后补上 worker 回复流已关闭时立即拒绝新请求，重新构建最终镜像
+  `sysrunc-it:218-20261126-worker-mux-final`，image ID
+  `sha256:bfae9450dba242e1c503c41d95e28c072e41dc9591c61449922b636d34377d51`。
+  `go test -race ./fs/worker` 和 `make build` 再次通过。该镜像已导入
+  专用 CKM L1，Helm revision 31 deployed；installer、admission 均
+  1/1 Ready，运行 imageID 与本地一致。K3s 重启后重建两个 Never
+  策略测试 Pod，FS、普通 Pod 恢复 1/1 Ready，rootfs Pod 2/2 Running。
+  FS Pod 读得 meminfo、hostname、`gc_thresh1=128`；rootfs 标记保留。
+
+## 2026-11-26 owner-only 虚拟文件只读快路径
+
+- 四个原先只能走 FUSE 的 owner-only 文件加入普通只读
+  `openat`/`openat2` memfd 快路径：`/proc/sys/fs/protected_{hardlinks,symlinks}`、
+  `/sys/devices/virtual/dmi/id/product_uuid`、
+  `/sys/module/nf_conntrack/parameters/hashsize`。注入前核对 tracee
+  filesystem UID 与 FUSE 所呈现的容器 root 所有者；非所有者仍交由
+  内核/FUSE 权限检查。注入的 FD 保留原 0600 或 0400 模式；`statx`
+  同步设置虚拟 UID/GID。源码测试覆盖 fsuid 字段、路径模式和 memfd
+  模式；`go test ./fs/seccomp ./fs/handler/implementations` 与
+  `make build` 通过。
+- 本地完整镜像 `sysrunc-it:218-20261126-owner-read` image ID
+  `sha256:b81e3d6642cda4c3c6c542902a458f4638b7189224cd57b0493ea5a424cba151`
+  已导入专用 CKM L1，未推送。Helm revision 32 deployed，installer 与
+  admission 均 1/1 Ready，imageID 一致。K3s 重启后仅重建两个 Never
+  策略测试 Pod，PVC 未删；FS、普通 Pod 均 1/1 Running，rootfs Pod
+  2/2 Running，持久标记仍是 `rootfs-1125-persist`。
+- FS Pod 中 root 打开四条路径的 FD 均为 `/memfd:sysrunc-*`；对应
+  模式为 0600、0600、0400、0600，读值为 `1`、`1`、容器 UUID、
+  `262144`。`nobody` 读取四条均被拒绝。FS Pod 的 `/proc/sys`
+  是只读挂载，写打开被内核以 `EROFS` 拒绝，L2 写入路径本轮未验收。
+
+## 2026-11-26 L0 systemd FUSE 修复 worker 故障注入
+
+- 218 外层正式 `sysrunc-fs.service` 使用 `--session-recovery`，systemd
+  FD store 上限 65536 且 Preserve=yes。创建一次性
+  `default/sysrunc-l0-recovery-probe-1126`（RuntimeClass `sysrunc`，
+  `sysrunc.io/fs=true`）后，其 `/proc/sys` 是 `sysboxfs` FUSE 挂载，
+  hostname 和 UUID 可读；FD store 中有 3 个 listener。
+- 执行 `systemctl restart sysrunc-fs.service` 后，主进程从 PID
+  2274035 换为 3861908。Pod 保持相同 UID、Ready 且重启次数 0。
+  立即读取时，旧 `/proc/sys` 挂载暂时返回 `Socket not connected`。
+  之后日志分别记录两次 `FUSE mounts recovered; reopen stale descriptors`，
+  故障处理计数为 attempts=3、successes=2、failures=0；该探针的
+  `/proc/sys` 设备号从 `0:16632` 换成 `0:14904`，hostname 和 UUID
+  恢复可读。修复从服务重启到日志成功约 45–60 秒，并非无中断切换；
+  已打开的旧描述符仍需应用重新打开。
+- 测试 Pod 已删除，FD store 回到 0；外层 FS 服务 Active，专用 CKM
+  Server 2/2 Ready，内层 FS、普通 Pod 1/1 Running，rootfs Pod
+  2/2 Running。此测试证明 L0 systemd 模式的 FUSE worker 实际执行了
+  挂载修复；L1 非 systemd 模式的主进程 SIGKILL 恢复仍未实现。
+
+## 2026-11-26 统一 installer 名称和镜像
+
+- Chart 在 host 与 nested 模式均渲染 `w7panel-sysrunc-installer`
+  DaemonSet、`installer` 容器，admission 保留独立名称。两者以及 nested
+  卸载 Job 均只引用 `installer.image`；host/nested 模板和 lint 通过。
+- 本地镜像 `sysrunc-it:218-20261126-product-uuid-worker`，image ID
+  `sha256:20470ae06b35e732e931da78bd2e41b071a62b2657fe39abdeb2e6322e3a47c7`，
+  已导入 218 专用 CKM L1，未推送。Helm revision 33 使用 `--reset-values`
+  清除旧 `admission.image` 保存值。installer 和 admission 均 1/1 Ready，
+  运行 imageID 与本地一致；L0 installer 仍使用公开 CCR 镜像。
+- K3s 重启后仅重建两个 Never 策略测试 Pod，未删除 PVC。FS 和普通
+  Pod 均 Ready，rootfs Pod 2/2 Running；虚拟 `product_uuid` 读值为
+  `00000000-0000-0000-0000-ec0aa11033b4`，rootfs 持久标记仍为
+  `rootfs-1125-persist`。本次读值验证没有单独证明生产路径必经 worker；
+  源码 worker 测试覆盖注册、跨容器隔离与注销行为。
+- 外层 `default/w7panel-sysrunc` 也升级到 Helm revision 5，清除了旧
+  `admission.image` 保存值。DaemonSet 名称与容器名分别为
+  `w7panel-sysrunc-installer`、`installer`；admission 独立命名。两者
+  均使用同一公开 CCR 镜像 `w7panel-sysrunc:v0.1.3`。installer rollout
+  成功，专用 CKM Server 保持 2/2 Ready，L1 installer/admission 均
+  1/1 Running。L1 仍使用本地测试镜像，未进行正式镜像发布。
+
+## 2026-11-26 `/proc/slabinfo` proc worker 路径
+
+- 将 `/proc/slabinfo` 加入 exact-path 普通只读 `openat`/`openat2` 快路径，
+  由已注册容器的 proc worker 读取；worker 失败时回退原 FUSE handler。
+  `go test ./fs/seccomp ./fs/worker ./fs/handler/implementations` 和
+  `make build` 通过。
+- 本地镜像 `sysrunc-it:218-20261126-slabinfo-worker`，image ID
+  `sha256:b8b84774066d73b144f04fc133eb7adbbdb49b5c23529e44363ef60fcb85c939`，
+  已导入 218 专用 CKM L1，未推送。Helm revision 34 deployed，installer
+  与 admission 均 1/1 Running，运行 imageID 与本地一致。K3s 重启后仅
+  重建两个 Never 策略 Pod，未删除 PVC；FS 和普通 Pod 均 Ready，rootfs
+  Pod 2/2 Running，标记仍是 `rootfs-1125-persist`。
+- 该 CKM 的 nested user namespace 无权读取 `/proc/slabinfo` 后备文件。
+  升级前后 `head /proc/slabinfo` 都返回 `Permission denied`；因此 218
+  只能验证安全回退，不能证明成功读取时的 worker 命中或吞吐收益。
+  宿主可读环境的 `TestProcWorkerSlabinfoRead` 已验证 worker 返回实际
+  slabinfo 内容。同一 FS Pod 的 meminfo 与虚拟 product UUID 读取正常。
+
+## 2026-11-26 IPVS 虚拟 sysctl 普通读取
+
+- `/proc/sys/net/ipv4/vs/{conntrack,conn_reuse_mode,expire_nodest_conn,expire_quiescent_template}`
+  加入只读 seccomp 快路径，仍读取原容器 handler 的值，写操作继续由
+  FUSE 处理。只在宿主 IPVS 目录存在时启用，避免模块未加载时凭空
+  暴露文件。源码测试核对四个路径的 handler 元数据与目录前提；
+  `go test ./fs/seccomp ./fs/worker ./fs/handler/implementations` 和
+  `make build` 通过。
+- 本地镜像 `sysrunc-it:218-20261126-ipvs-read` image ID
+  `sha256:864fb4ea458430b4fc9b5a5087e14afedccfa5dd876364516ecf6af2ef043bd9`
+  已导入专用 CKM L1，未推送。Helm revision 35 deployed，installer 与
+  admission 均 1/1 Running，运行 imageID 一致。K3s 重启后只重建两个
+  Never 策略 Pod，PVC 未删。FS 与普通 Pod Ready，rootfs Pod 2/2
+  Running 且持久标记仍是 `rootfs-1125-persist`；FS Pod 的 meminfo 与
+  虚拟 product UUID 可读。
+- 218 当前未加载 IPVS，L2 的 `/proc/sys/net/ipv4/vs` 在升级前后均
+  不存在。这验证了缺失目录时不会误暴露虚拟文件；实际 IPVS 读取
+  命中仍需在加载模块的环境验收。
+
+## 2026-11-26 FUSE 只读资源交由 proc worker
+
+- FUSE 的 cpuinfo、diskstats、swaps、meminfo、uptime、stat、slabinfo、
+  pressure 与 CPU online/present 快照优先向已注册容器的 proc worker 读取；
+  worker 不可用时回退原 handler。seccomp 快路径在 worker 失败后进入
+  handler 时跳过再次请求，避免重复超时。loadavg 继续使用已有 ticker
+  opt-in 逻辑。源码测试验证 worker 命中、错误回退和跳过重试；
+  `go test -race ./fs/handler/implementations ./fs/seccomp ./fs/worker`
+  与 `make build` 通过。
+- 本地镜像 `sysrunc-it:218-20261126-fuse-proc-worker` image ID
+  `sha256:a32639ea690e142ce47c832957eb939e2c45fa470333a2887c73aa6f8cf6ceda`
+  已导入 218 专用 CKM L1，未推送。Helm revision 36 deployed；installer
+  与 admission 均 1/1 Running，运行 imageID 与本地一致。K3s 重启后仅
+  重建两个 Never 策略 Pod，PVC 未删。FS、普通 Pod 均 Ready，rootfs
+  Pod 2/2 Running，标记仍是 `rootfs-1125-persist`。
+- 使用静态探针以 `O_RDONLY|O_NONBLOCK|O_CLOEXEC` 打开 FS Pod 的
+  `/proc/meminfo` 与 `/sys/devices/system/cpu/online`，避开普通只读
+  seccomp memfd 快路径，实际读取均成功。两条路径是 FUSE 挂载，FS
+  日志分别记录 `FUSE read for ... served by proc worker`，证明 FUSE
+  回调实际使用了 proc worker。`/proc/pressure/cpu` 在该 Pod 是原生
+  proc 文件，没有用于这项 FUSE 命中验证。
+- 单 Pod 500 次和 1000 次 open/read/close 粗测中，meminfo 普通只读
+  路径约 366/396 μs 每次，强制 FUSE 路径约 488/417 μs；CPU online
+  普通只读路径约 489/464 μs，强制 FUSE 约 387/442 μs。结果随路径和
+  运行次序波动，尚不能证明稳定吞吐收益；这项性能验收仍待更严格测量。
+
+## 2026-11-27 CKM controller 调谐恢复与 FD 路径复核
+
+- 218 原 `w7panel-ckm` controller 仍运行旧
+  `docker.cnb.cool/i0358/ai-cvm:1.1.146`。它在 10:03 重建专用 CKM
+  Server 时撤掉 `sysrunc.io/rootfs-rw-layer`，把 K3s snapshotter 从
+  `native` 改为 `overlayfs`。新 Pod 因无法创建
+  `/var/lib/rancher/k3s/server` 而 CrashLoop；直接回滚 Deployment 又
+  被旧 controller 覆盖。
+- `w7panel-ckm` 当前源码的 controller/resources 测试通过。使用项目
+  `make build-use-ko` 将已提交源码构建并推送至
+  `ccr.ccs.tencentyun.com/afan-public/w7panel-ckm:218-20261127-sysrunc-reconcile`，
+  digest 为 `sha256:92b48bbe538bbd86d8e009dc7f8862196d90eb47cfb068cfa2f4991219767656`，
+  CCR manifest 可读取。218 `default/w7panel-ckm` 只替换 manager 镜像，
+  Pod 1/1 Ready、运行 imageID 与 digest 一致。原镜像为上述 ai-cvm
+  tag，供回退参考。新 controller 恢复了专用 CKM Server 的 rootfs
+  注解和 native snapshotter，Server 2/2 Ready。
+- `/tmp` 在跨日后已清理。只删除两个 Unknown 的 Never 策略测试 Pod，
+  用等效新清单 `/tmp/sysrunc-218-testpods.yaml` 重建；原 PVC 均保留。
+  FS 与普通 Pod 1/1 Ready，rootfs Pod 2/2 Running，标记仍为
+  `rootfs-1125-persist`。新普通 Pod 沿用两个原 PVC；新 FS Pod 用
+  nginx 镜像运行睡眠命令并开启 `sysrunc.io/fs`。
+- 新 FS Pod 中 `/proc/meminfo` 普通只读打开的 FD 指向
+  `/memfd:sysrunc-meminfo`；`O_NONBLOCK` 打开的 FD 指向
+  `/proc/meminfo`，两者均可读。FS 日志记录后者的 FUSE 回调由
+  proc worker 提供数据。跨日的 CKM 重建使前一轮性能数字只能作为
+  当时的粗测结果；稳定吞吐收益仍未验收。
+
+## 2026-11-27 L0/L1 Chart 共用 installer 名称与镜像
+
+- Chart 的 host、nested 模式均渲染 `w7panel-sysrunc-installer` DaemonSet，
+  容器名为 `installer`；两层 installer、admission 和内层卸载 Job 均从
+  `installer.image` 取镜像。`helm lint`、两种模式的 `helm template` 和
+  `git diff --check` 通过。
+- 使用 `make build-image IMAGE_TAG=218-20261127-unified-installer` 构建并
+  直接推送 `ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc:218-20261127-unified-installer`；
+  CCR manifest digest 为
+  `sha256:a914eec08d632265613c3554ea9706efa4407c7bdee08177588dd0dd7304420f`。
+- 218 外层 `default/w7panel-sysrunc` Helm revision 6、内层 revision 38
+  均为 deployed；两层 installer DaemonSet 和 admission Deployment 都是
+  1/1 Ready，镜像引用完全相同。外层更新运行时期间曾 cordon 节点并
+  重建 CKM Server；三个已 Failed 的旧 Server Pod 带 K3K etcd finalizer，
+  清除这些旧 Pod 的 finalizer 后安装器继续完成并 uncordon 节点。
+  内层 Helm upgrade 在 API 转发断开后留下 pending revision 37，
+  已按 revision 37 内容执行 rollback，生成 deployed revision 38。
+- 专用 CKM Server 恢复 2/2 Ready；内层两个 `restartPolicy: Never` 测试
+  Pod 因 Server 重建变为 Unknown，仅重建这两个 Pod，PVC 均保留。
+  FS、普通 Pod 1/1 Ready，rootfs Pod 2/2 Ready，持久标记仍为
+  `rootfs-1125-persist`。
+
+## 2026-11-27 CKM snapshotter 同运行时自愈
+
+- `w7panel-ckm` 的 `go test ./controllers ./pkg/resources` 和
+  `git diff --check` 通过。按项目 `make build-use-ko` 推送测试镜像
+  `ccr.ccs.tencentyun.com/afan-public/w7panel-ckm:218-20261127-sysrunc-snapshotter-reconcile`，
+  digest `sha256:dccb00f3ea1e64ed28fc79a320be218222fa240b5b9a134a1cb8b5e62b2cca13`；
+  218 `default/w7panel-ckm` manager 已运行该 digest。
+- 手动将专用 CKM Server Deployment 的 `K3S_SNAPSHOTTER` 改成
+  `overlayfs`。controller 在 runtimeClass 仍为 `sysrunc` 时自动恢复
+  `native`，`sysrunc.io/rootfs-rw-layer` 注解保持；Deployment revision
+  10 和新 Server Pod 2/2 Ready。
+- K3s 重启使两个 Never 策略测试 Pod 变成 Unknown，仅重建这两个 Pod，
+  PVC 保留。FS、普通 Pod 1/1 Running，rootfs Pod 2/2 Running，
+  `/root/rootfs-marker-1125` 仍为 `rootfs-1125-persist`。
+
+## 2026-11-27 L1 FS 崩溃恢复与 L0/L1 单镜像复验
+
+- `make build-image` 推送了两版 CCR 测试镜像：
+  `218-20261127-fs-crash-recovery` digest
+  `sha256:5773c232ef27b9edfbcec1fc600fc4ea63dc4a69d4c4f82647feb3017ecb4528`；
+  修复旧 checkpoint 边界的 `218-20261127-fs-crash-recovery2` digest
+  `sha256:03dce51c9f19fd4f1efc62c79dca24b357cc797706c74547cfd980bdec48d3d2`。
+- L1 无 systemd 的 installer 启动独立 FD broker 与 `--session-recovery`
+  FS。对 FS 主进程发送 SIGKILL 后，broker 保留 seccomp listener，新 FS
+  恢复两个旧 FUSE 挂载，日志记录 `attempts=2 successes=2 failures=0`。
+  FS Pod UID 不变、容器重启数为 0，非阻塞读取 `/proc/meminfo` 成功，
+  FUSE 日志确认由 proc worker 提供数据；rootfs 持久标记仍在。
+- 第一版镜像在 CKM Server Pod 被 L0 更新重建后遇到旧 checkpoint：
+  新 PID namespace 没有旧 broker listener，FS 拒绝启动。第二版在旧
+  namespace 容器全部失效时丢弃 checkpoint；存在存活容器但缺 listener
+  时仍拒绝恢复。L1 revision 40 使用第二版，Server 与测试 Pod 恢复。
+- L0 revision 8 也升级到第二版。外层更新节点运行时并重建 CKM Server
+  后，新 Server 2/2 Ready，节点 Ready；L0 与 L1 的 installer 和
+  admission 四个容器的运行 `imageID` 均为上述同一 CCR digest。
+  L1 Helm revision 40 为 deployed，内层 installer DaemonSet 1/1 Ready。
+  两个因 Server 重建变为 Unknown 的 Never 策略测试 Pod 仅重建 Pod，
+  PVC 均保留。FS 与普通 Pod 1/1 Ready，rootfs Pod 2/2 Ready；
+  `/root/rootfs-marker-1125` 仍为 `rootfs-1125-persist`，FS Pod 的
+  `/proc/meminfo` 可读。snapshotter 进程也在新 Server 中运行。
+
+## 2026-11-27 FS checkpoint 的 fuse-overlayfs rename 修复
+
+- 虚拟文件 backing read 现处理短读；短 proc/sys 写入返回错误，不再当作
+  完整写入。handler 与 recovery 路径源码测试通过。
+- 首版测试镜像 `218-20261127-virtual-io-fix` digest
+  `sha256:336de70d0c00eab8f4a0a0f5caf7c333aea56f617c780fc35db53a47ac6ba6a6`
+  在 L1 revision 41 暴露了 checkpoint 问题：CKM Server 的根文件系统为
+  fuse-overlayfs，原 `/run/sysrunc/fs-restart.json` 是已有层的文件，
+  `rename` 覆盖它返回 `ENOTDIR`，FS Pod 无法注册。将仅含空容器列表的
+  旧 checkpoint 改名保留后，新 checkpoint 可以正常写入，FS Pod Ready。
+- 修复版将新 checkpoint 写到容器 `/dev/shm/sysrunc/fs-restart.json`，
+  首次启动仍可读取旧 `/run` 路径以迁移已有会话。`make build-image`
+  推送 `218-20261127-checkpoint-tmpfs`，digest
+  `sha256:4cf83d2dd2c89a3c5087a271739fef43c053955b70cb065132f73cdcf04b2482`。
+  L1 Helm revision 42 deployed，installer 和 admission 均运行该 digest。
+  K3s 重启后保留 PVC，仅重建两个 Unknown 的 Never 策略 Pod；FS、普通、
+  rootfs Pod 均 Ready，rootfs 标记仍为 `rootfs-1125-persist`。
+- 对新 FS 主进程发送 SIGKILL，重启后从 tmpfs checkpoint 恢复两个
+  FUSE 挂载，日志记录 `attempts=2 successes=2 failures=0`。FS Pod UID
+  `3bd0990d-4167-4a14-a4a7-2c12aafe689b` 不变、容器重启数为 0，
+  非阻塞读 `/proc/meminfo` 成功。
+- L0 Helm revision 9 也升级到相同镜像，节点 Ready 且可调度；外层更新
+  重建专用 CKM Server 后，新 Server 2/2 Ready。L0 与 L1 installer、
+  admission 四个容器的运行 imageID 均为上述同一 digest。L1 revision
+  42 保持 deployed，新的 tmpfs checkpoint 已写入且随 FS Pod 注册增长；
+  两个 Never 策略 Pod 仅重建 Pod，PVC 保留。FS 和普通 Pod 1/1 Ready，
+  rootfs Pod 2/2 Ready，非阻塞读 `/proc/meminfo` 与持久标记复核通过。
+
+## 2026-11-27 sysinfo 内存计算迁入 proc worker
+
+- TAPD `1162789787001016333` 要求 seccomp 拦截保留在主进程，容器视角的
+  proc 虚拟化和 syscall 业务交给按容器注册的 proc worker。将 `sysinfo`
+  的 cgroup 内存计算加入 proc worker 请求；worker 不可用时保留 manager
+  原计算作为兜底。worker 生命周期测试、seccomp 与 FS 命令测试通过。
+- `make build-image` 推送
+  `ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc:218-20261127-sysinfo-worker`，
+  digest `sha256:30ee838b6be267e3e906c62c55df13184e34d855094bfdb2cd4b609a453fdb4c`。
+  L1 Helm revision 43、L0 revision 10 均 deployed；两层 installer 和
+  admission 四个运行容器的 imageID 均为该 digest。
+- 在 L1 创建 256Mi 内存限额的临时 FS Pod，用名为 `free` 的静态探针调用
+  `sysinfo`。返回 `total=268435456` 字节、`unit=1`，与 Pod 的
+  `/sys/fs/cgroup/memory.max=268435456` 和 `/proc/meminfo` 的
+  `MemTotal=262144 kB` 一致。已删除临时 Pod。
+- L0 更新重建专用 CKM Server 后，Server 2/2 Ready，节点 Ready 且可调度；
+  内层两个 Unknown 的 Never 策略 Pod 只重建 Pod、保留 PVC。FS 与普通
+  Pod 1/1 Ready，rootfs Pod 2/2 Ready，rootfs 持久标记仍为
+  `rootfs-1125-persist`，非阻塞读取 `/proc/meminfo` 成功。
+- 同轮在 218 用 `ls` 触发 `/proc/sys/kernel/random` 和
+  `/proc/sys/net/core` 的 `getdents64`，FS 日志确认两个目录均走 seccomp
+  快路径；新增源码检查覆盖所有已启用的虚拟目录注册项。
+
+## 2026-11-27 L0 回滚重装与统一镜像复核
+
+- L0 cleanup Helm revision 13 的 installer DaemonSet Ready；宿主机二进制、
+  安装标记及 K3s runtime 模板中的 Sysrunc 配置均清除，节点保持 Ready。
+  重装到 revision 14 后，二进制、标记、配置和节点运行标签恢复。
+- L0 revision 14 与 L1 revision 44 的 installer、admission 均使用
+  `ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc:218-20261127-host-rollback2`，
+  运行 imageID digest 均为
+  `sha256:b8548134f402ca10ea65bb7281cef840c8f93029994eecf92681125fcccecae6`。
+  两层 installer DaemonSet 同名 `w7panel-sysrunc-installer`；admission
+  Deployment 均名为 `w7panel-sysrunc-admission`。
+- L0 重装后，L1 两个 `restartPolicy: Never` 测试 Pod 变为 Unknown。
+  仅重建 `sysrunc-fresh-fs-1125` 和 `sysrunc-fresh-nginx-1125` Pod，
+  PVC 保留。两者及 `sysrunc-l2-rootfs-1125` 均 Ready；FS Pod 非阻塞读取
+  `/proc/meminfo` 成功，rootfs 标记仍为 `rootfs-1125-persist`。
+
+## 2026-11-27 相对虚拟文件路径快路径
+
+- seccomp 路径解析现识别从原 FUSE 目录 fd 打开的 `./文件名`。
+  `../` 和多级相对路径仍交给内核/FUSE 解析。源码 seccomp 测试通过。
+- `make build-image IMAGE_TAG=218-20261127-relative-proc` 推送镜像，
+  digest 为 `sha256:c953c44f801742b0120d4803a6a5c664ecead24b2a9dff9486d7c74b9eb895b6`。
+  L1 Helm revision 45、L0 revision 15 均 deployed；四个 installer/admission
+  运行容器的 imageID 都是该 digest。
+- L1 FS Pod 从 `/proc` 打开 `./meminfo` 得到
+  `/memfd:sysrunc-meminfo (deleted)`，从 `/proc/sys/kernel` 打开
+  `./hostname` 得到 `/memfd:sysrunc-hostname (deleted)`；
+  `./../proc/meminfo` 保持 `/proc/meminfo` FUSE fd。
+- L0 镜像更新重建专用 CKM Server 后，新 Server 2/2 Ready。只重建两个
+  `restartPolicy: Never` 的 FS 和普通测试 Pod，PVC 保留；FS、普通和 rootfs
+  三个 L2 Pod 均 Ready，rootfs 标记仍为 `rootfs-1125-persist`。
+
+## 2026-11-27 statx 虚拟元数据一致性
+
+- L1 旧镜像中，`statx(/proc/sys/kernel/hostname)` 返回宿主机 inode、设备号和
+  UID，与容器内 `stat()` 的 FUSE 元数据不同。内层宿主机没有
+  `/proc/sys/net/core/default_qdisc`，而 FS Pod 的 FUSE 视图提供该文件。
+  新实现从请求进程的 `/proc/<pid>/root` 视图获取元数据；无法获取时交给
+  内核处理，避免伪造不完整的属性。
+- 测试镜像 `218-20261127-statx-tracee` digest
+  `sha256:d8f5be357817360f3844c34d18b7c0e76ac79378760d10b71daa0faa45aedd86`。
+  L1 首次 Helm upgrade 因 K3s 重启中断停在 pending-upgrade revision 46；
+  回滚到相同 manifest 后 revision 47 deployed。L0 revision 16 deployed。
+  两层 installer 和 admission 四个运行容器的 imageID 都是该 digest。
+- L1 静态 syscall 探针比较 `statx` 与 `stat`：`hostname`、宿主机缺失的
+  `default_qdisc`、`meminfo`、`uuid` 四个路径的 mode、size、inode、
+  UID/GID 和设备号均一致。L0 更新重建 CKM Server 后，FS、普通 nginx、
+  rootfs 三个 L2 Pod 均 Ready；仅重建两个 Never 策略 Pod，PVC 保留，
+  rootfs 持久标记仍为 `rootfs-1125-persist`。`./meminfo` 仍走 memfd。
+
+## 2026-11-27 sysinfo 进程判断迁入 proc worker
+
+- `sysinfo` 的进程名判断现在由注册容器的 proc worker 执行；manager 只在
+  worker 不可用时执行旧判断和内存计算。源码 worker、seccomp、handler
+  测试通过。
+- 镜像 `218-20261127-sysinfo-worker-decision` digest
+  `sha256:4551824947437c9812780a48ac2ac43789e58ada5e0f47b9d88cbdfaa8f2ba12`。
+  L1 Helm revision 48、L0 revision 17 均 deployed；两层 installer、
+  admission 四个运行容器的 imageID 均为该 digest。
+- L1 临时 FS Pod 的 `memory.max=268435456`。同一静态 syscall 探针作为
+  `/tmp/free` 返回 `total=268435456`、`unit=1`；复制为 `/tmp/not-free`
+  后返回宿主机原始 `total=64980623360`。临时 Pod 已删除。
+- L0 更新重建专用 CKM Server 后，新 Server 2/2 Ready。仅重建两个
+  Never 策略测试 Pod，PVC 保留；FS、普通 nginx、rootfs 三个 L2 Pod
+  均 Ready，rootfs 标记仍为 `rootfs-1125-persist`，`./meminfo` 为 memfd。
+
+## 2026-11-27 缺失的虚拟 sysctl 迁入 proc worker
+
+- `/proc/sys/net/core/default_qdisc` 和
+  `/proc/sys/net/ipv4/neigh/default/gc_thresh{1,2,3}` 由每容器 proc worker
+  保存；manager 保留 FUSE 故障兜底，Supervisor 在 worker 重启后回放写入值。
+  同网络命名空间的容器共用 FUSE 状态，seccomp 快路径已对齐该共享状态。
+- 218 L1 写入 `default_qdisc=fq`、`gc_thresh1=256` 后，FS Pod 普通读取与
+  强制 FUSE 读取结果一致。定向终止 proc worker 后，新 worker 接管，
+  两条读取路径仍返回写入值。测试后恢复为 `fq_codel`、`128`。
+- L2 `/proc/sys` 为只读；临时 `hostUsers:false`、`procMount: Unmasked`
+  Pod 因网络沙箱权限无法创建。写入测试改用 L1 Server 内该容器对应的
+  FUSE 挂载点，临时 Pod 已删除。
+- 修正并发写入到回放缓存与 worker 管道的顺序。最终镜像
+  `ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc:218-20261127-virtual-sysctl-order`
+  digest `sha256:8b58b9b776d6b481d80ee7aa3d8bea5b96a50602924cd79684d558174f9b6b8f`。
+  L1 Helm revision 51、L0 revision 18 已部署；两层 installer、admission
+  四个运行容器 imageID 均为该 digest。L0 更新重建专用 CKM Server 后，
+  新 Server 2/2 Ready；仅重建两个 Never 策略测试 Pod，PVC 保留。
+  FS、普通 nginx、rootfs 三个 L2 Pod 均 Ready，rootfs 文件
+  `/root/rootfs-marker-1125` 仍为 `rootfs-1125-persist`，FS Pod 中
+  `default_qdisc=fq_codel`、`gc_thresh1=128`。
+
+## 2026-11-27 宿主机有初值的虚拟 sysctl 状态迁入 proc worker
+
+- 扩展 worker 状态覆盖其余容器缓存的虚拟 proc/sys 和 nf_conntrack hashsize
+  文件。首次读取从原 handler 取得完整宿主值并交给 proc worker；后续读取、
+  成功写入和 worker 重启回放使用同一容器状态。写入校验和必要的宿主操作
+  仍沿用原 handler。
+- 镜像 `218-20261127-proc-sysctl-worker` 已推送到 CCR，digest
+  `sha256:211b6da4bcf0ccad962a29ea99f024345e4c6967718c1404fc701c5ba41a6fbd`。
+  L1 Helm revision 52 已部署。FS Pod 对应 FUSE 挂载点的
+  `/proc/sys/vm/overcommit_memory` 从 `1` 写为 `2` 后，L2 容器读到 `2`，
+  L1 宿主值仍为 `1`。定向终止 proc worker 后，新 worker 接管，FUSE 和
+  L2 仍读到 `2`；测试后恢复为 `1`。L0 Helm revision 19 已部署，
+  两层 installer、admission 四个运行容器的 imageID 均为该 digest。
+  L0 更新重建专用 CKM Server 后，新 Server 2/2 Ready。仅重建两个
+  Never 策略 Pod，PVC 保留；FS、普通 nginx、rootfs 三个 L2 Pod 均 Ready，
+  rootfs 文件仍为 `rootfs-1125-persist`，FS Pod 中的 `overcommit_memory=1`。
+  定向终止 L1 FUSE worker 后，Supervisor 启动新 worker；FS Pod 仍可读取
+  `/proc/meminfo` 和 `overcommit_memory`。该 Pod 只配置 `sysrunc.io/fs=true`，
+  未配置 ticker 注解。

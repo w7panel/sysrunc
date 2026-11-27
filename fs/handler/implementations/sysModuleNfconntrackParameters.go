@@ -17,14 +17,19 @@
 package implementations
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/sirupsen/logrus"
 
 	"github.com/w7panel/sysrunc/fs/domain"
+	"github.com/w7panel/sysrunc/fs/fuse"
 )
 
 //
@@ -109,10 +114,43 @@ func (h *SysModuleNfconntrackParameters) Read(
 
 	switch resource {
 	case "hashsize":
+		file, err := os.Open(n.Path())
+		if err == nil {
+			file.Close()
+		} else if os.IsNotExist(err) || os.IsPermission(err) {
+			// In a nested user namespace the host module parameter is often
+			// mapped to nobody and unreadable. The kernel exposes the same
+			// bucket count through this world-readable sysctl.
+			return readHashsizeWithoutHost(n, req, "/proc/sys/net/netfilter/nf_conntrack_buckets")
+		}
 		return readCntrData(h, n, req)
 	}
 
 	return readHostFs(h, n, req.Offset, &req.Data)
+}
+
+func readHashsizeWithoutHost(n domain.IOnodeIface, req *domain.HandlerRequest, bucketsPath string) (int, error) {
+	// Once a container has a value, its read must not depend on the fallback
+	// sysctl remaining present (or on a later host-wide bucket adjustment).
+	cntr := req.Container
+	cntr.Lock()
+	sz, cachedErr := cntr.Data(n.Path(), req.Offset, &req.Data)
+	cntr.Unlock()
+	if cachedErr != nil && cachedErr != io.EOF {
+		return 0, fuse.IOerror{Code: syscall.EINVAL}
+	}
+	if sz != 0 || req.Offset != 0 {
+		return sz, nil
+	}
+	buckets, err := os.ReadFile(bucketsPath)
+	if err != nil {
+		return 0, fuse.IOerror{Code: syscall.EINVAL}
+	}
+	value := strings.TrimSpace(string(buckets))
+	if _, err := strconv.ParseUint(value, 10, 64); err != nil {
+		return 0, fuse.IOerror{Code: syscall.EINVAL}
+	}
+	return readCntrDataWithoutHost(n, req, value+"\n")
 }
 
 func (h *SysModuleNfconntrackParameters) Write(

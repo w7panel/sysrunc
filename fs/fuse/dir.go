@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/w7panel/sysrunc/fs/domain"
@@ -359,6 +360,7 @@ func (d *Dir) ReadDirAll(ctx context.Context, req *fuse.ReadRequest) ([]fuse.Dir
 
 		children = append(children, elem)
 	}
+	sort.SliceStable(children, func(i, j int) bool { return children[i].Name < children[j].Name })
 
 	return children, nil
 }

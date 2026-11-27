@@ -16,6 +16,7 @@ import (
 	"time"
 
 	systemd "github.com/coreos/go-systemd/daemon"
+	"github.com/moby/sys/mountinfo"
 	"github.com/sirupsen/logrus"
 	"github.com/w7panel/sysrunc/fs/domain"
 	"github.com/w7panel/sysrunc/fs/fuse"
@@ -26,9 +27,22 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const fsRestartFile = "/run/sysrunc/fs-restart.json"
+// The CKM Server rootfs can be fuse-overlayfs. Replacing a checkpoint file
+// inherited from its lower layer by rename returns ENOTDIR there. Keep the
+// live checkpoint on the container's tmpfs, which also survives an FS process
+// crash, and read the old location once when upgrading a live session.
+const fsRestartFile = "/dev/shm/sysrunc/fs-restart.json"
+const legacyFSRestartFile = "/run/sysrunc/fs-restart.json"
 const recoveryMetricsSocket = "/run/sysrunc/recovery-metrics.sock"
 const recoveryMetricsTextfile = "/run/sysrunc-metrics/sysrunc-fs.prom"
+
+func readFSRestart(primary, legacy string, brokerRecovery bool) (*state.RestartState, error) {
+	saved, err := state.ReadRestart(primary, brokerRecovery)
+	if err != nil || saved != nil {
+		return saved, err
+	}
+	return state.ReadRestart(legacy, brokerRecovery)
+}
 
 type recoveryRunner struct {
 	workers *worker.Supervisor
@@ -40,6 +54,7 @@ type recoveryRunner struct {
 	root                                            string
 	recordsMu                                       sync.RWMutex
 	records                                         map[uint32][]state.RestartContainer
+	restored                                        []state.RestartContainer
 	repairMu                                        sync.Mutex
 	statsMu                                         sync.Mutex
 	repaired                                        sync.Map
@@ -66,6 +81,21 @@ type faultProcess struct {
 type faultMount struct {
 	namespace uint64
 	device    uint32
+}
+
+type idleRecoveryEvents struct {
+	done chan struct{}
+	once sync.Once
+}
+
+func (e *idleRecoveryEvents) Read() (recovery.Fault, error) {
+	<-e.done
+	return recovery.Fault{}, io.EOF
+}
+
+func (e *idleRecoveryEvents) Close() error {
+	e.once.Do(func() { close(e.done) })
+	return nil
 }
 
 const frequentFaultThreshold = 5
@@ -96,10 +126,31 @@ const (
 	repairUnsupported
 )
 
-func prepareRecovery(css domain.ContainerStateServiceIface, fss *fuse.FuseServerService, root string) (*recoveryRunner, error) {
-	saved, err := state.ReadRestart(fsRestartFile)
+func prepareRecovery(css domain.ContainerStateServiceIface, fss *fuse.FuseServerService, root string, listenerCount int) (*recoveryRunner, error) {
+	brokerRecovery := os.Getenv("SYSRUNC_FD_BROKER_SOCKET") != ""
+	saved, err := readFSRestart(fsRestartFile, legacyFSRestartFile, brokerRecovery)
 	if err != nil {
 		return nil, err
+	}
+	if saved != nil && !saved.Clean {
+		live, err := hasLiveCheckpointContainers(saved)
+		if err != nil {
+			return nil, err
+		}
+		if !live {
+			// A CKM Server recreation gives the new K3s process a fresh PID
+			// and mount namespace. Its old /run checkpoint may persist, but
+			// none of its container sessions can be adopted here.
+			logrus.Info("discarding FS checkpoint from a previous K3s PID namespace")
+			saved = nil
+		} else if listenerCount == 0 {
+			return nil, fmt.Errorf("FS crash checkpoint has containers but the FD broker retained no listeners")
+		}
+		if saved != nil {
+			if err := detachCrashedHostMounts(root, saved); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if saved == nil {
 		entries, err := os.ReadDir(root)
@@ -121,6 +172,7 @@ func prepareRecovery(css domain.ContainerStateServiceIface, fss *fuse.FuseServer
 	r := &recoveryRunner{css: css, root: root, records: make(map[uint32][]state.RestartContainer), faultCounts: make(map[faultProcess]int)}
 	var devices []uint32
 	if saved != nil {
+		r.restored = append([]state.RestartContainer(nil), saved.Containers...)
 		for _, c := range saved.Containers {
 			for _, dev := range c.Devices {
 				if len(r.records[dev]) == 0 {
@@ -132,7 +184,13 @@ func prepareRecovery(css domain.ContainerStateServiceIface, fss *fuse.FuseServer
 	}
 	r.events, err = recovery.NewEvents(devices)
 	if err != nil {
-		return nil, err
+		if !brokerRecovery {
+			return nil, err
+		}
+		// L1 user namespaces may not permit BPF attachment. The bounded
+		// namespace scan still repairs disconnected mounts without events.
+		logrus.WithError(err).Warn("FUSE fault events unavailable; using namespace scan")
+		r.events = &idleRecoveryEvents{done: make(chan struct{})}
 	}
 	if saved != nil {
 		saved.Clean = false
@@ -147,6 +205,74 @@ func prepareRecovery(css domain.ContainerStateServiceIface, fss *fuse.FuseServer
 		return nil, err
 	}
 	return r, nil
+}
+
+func hasLiveCheckpointContainers(saved *state.RestartState) (bool, error) {
+	for _, container := range saved.Containers {
+		start, err := state.ProcessStartTime(container.PID)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if start == container.StartTime {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// An FS SIGKILL disconnects the manager-owned host FUSE connections. Remove
+// only mounts whose exact path and device are recorded in the same-boot
+// checkpoint; the container namespace copies are repaired after restoration.
+func detachCrashedHostMounts(root string, saved *state.RestartState) error {
+	mounts, err := mountinfo.GetMounts(nil)
+	if err != nil {
+		return err
+	}
+	byPath := make(map[string][]*mountinfo.Info)
+	for _, mount := range mounts {
+		byPath[mount.Mountpoint] = append(byPath[mount.Mountpoint], mount)
+	}
+	knownPaths := make(map[string]bool, len(saved.Containers))
+	for _, container := range saved.Containers {
+		path := filepath.Join(root, container.ID)
+		knownPaths[path] = true
+		for _, mount := range byPath[path] {
+			device := uint32(mount.Major)<<20 | uint32(mount.Minor)
+			known := false
+			for _, expected := range container.Devices {
+				known = known || expected == device
+			}
+			if mount.FSType != "fuse" || mount.Source != "sysboxfs" || !known {
+				return fmt.Errorf("refusing to detach unrecognized mount at %s", path)
+			}
+			if err := unix.Unmount(path, unix.MNT_DETACH); err != nil {
+				return fmt.Errorf("detach crashed FUSE host mount %s: %w", path, err)
+			}
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove crashed FUSE mountpoint %s: %w", path, err)
+		}
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name())
+		if knownPaths[path] {
+			continue
+		}
+		if len(byPath[path]) > 0 {
+			return fmt.Errorf("uncheckpointed FUSE mount at %s", path)
+		}
+		if !entry.IsDir() || os.Remove(path) != nil {
+			return fmt.Errorf("uncheckpointed nonempty FUSE path at %s", path)
+		}
+	}
+	return nil
 }
 
 func (r *recoveryRunner) repair(ctx context.Context, pid uint32, c state.RestartContainer, deviceNums []uint32) repairResult {
@@ -319,54 +445,57 @@ func (r *recoveryRunner) run(ctx context.Context) error {
 		defer close(fallbackDone)
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
+		first := time.NewTimer(time.Second)
+		defer first.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
+			case <-first.C:
 			case <-ticker.C:
-				scanStarted := time.Now()
-				r.statsMu.Lock()
-				r.faultCounts = make(map[faultProcess]int)
-				r.statsMu.Unlock()
-				dead := make(map[string]bool)
-				active := make(map[faultMount]bool)
-				complete := true
-				candidates := 0
-				for _, c := range r.checkpointContainers() {
-					start, err := state.ProcessStartTime(c.PID)
-					if r.css.ContainerLookupById(c.ID) == nil || err != nil || start != c.StartTime {
-						dead[c.ID] = true
-						continue
-					}
-					candidates++
-					namespaces, err := r.repairSilentNamespaces(ctx, c)
-					if err != nil {
-						complete = false
-					} else {
-						for namespace := range namespaces {
-							for _, device := range c.Devices {
-								active[faultMount{namespace, device}] = true
-							}
+			}
+			scanStarted := time.Now()
+			r.statsMu.Lock()
+			r.faultCounts = make(map[faultProcess]int)
+			r.statsMu.Unlock()
+			dead := make(map[string]bool)
+			active := make(map[faultMount]bool)
+			complete := true
+			candidates := 0
+			for _, c := range r.checkpointContainers() {
+				start, err := state.ProcessStartTime(c.PID)
+				if r.css.ContainerLookupById(c.ID) == nil || err != nil || start != c.StartTime {
+					dead[c.ID] = true
+					continue
+				}
+				candidates++
+				namespaces, err := r.repairSilentNamespaces(ctx, c)
+				if err != nil {
+					complete = false
+				} else {
+					for namespace := range namespaces {
+						for _, device := range c.Devices {
+							active[faultMount{namespace, device}] = true
 						}
 					}
-					if _, done := r.fallbackDone.Load(c.ID); done {
-						continue
-					}
-					// Only checkpointed, disconnected devices are eligible. Inspect
-					// mount metadata directly rather than block on a FUSE stat.
-					if result := r.repair(ctx, c.PID, c, c.Devices); result != repairFailed && result != repairUnsupported {
-						r.fallbackDone.Store(c.ID, struct{}{})
-					}
 				}
-				r.forgetRecords(dead)
-				r.pruneRepaired(active, complete)
-				r.statsMu.Lock()
-				r.fallbackScanDuration += time.Since(scanStarted)
-				r.fallbackScanCount++
-				r.fallbackScanCandidates = candidates
-				logrus.WithFields(logrus.Fields{"attempts": r.attempts, "successes": r.succeeded, "failures": r.failed, "old_fd_events": r.stale, "unsupported": r.skipped, "scan_candidates": candidates, "scan_duration_ms": time.Since(scanStarted).Milliseconds()}).Info("FUSE recovery counters")
-				r.statsMu.Unlock()
+				if _, done := r.fallbackDone.Load(c.ID); done {
+					continue
+				}
+				// Only checkpointed, disconnected devices are eligible. Inspect
+				// mount metadata directly rather than block on a FUSE stat.
+				if result := r.repair(ctx, c.PID, c, c.Devices); result != repairFailed && result != repairUnsupported {
+					r.fallbackDone.Store(c.ID, struct{}{})
+				}
 			}
+			r.forgetRecords(dead)
+			r.pruneRepaired(active, complete)
+			r.statsMu.Lock()
+			r.fallbackScanDuration += time.Since(scanStarted)
+			r.fallbackScanCount++
+			r.fallbackScanCandidates = candidates
+			logrus.WithFields(logrus.Fields{"attempts": r.attempts, "successes": r.succeeded, "failures": r.failed, "old_fd_events": r.stale, "unsupported": r.skipped, "scan_candidates": candidates, "scan_duration_ms": time.Since(scanStarted).Milliseconds()}).Info("FUSE recovery counters")
+			r.statsMu.Unlock()
 		}
 	}()
 	err := r.runEvents(ctx, r.handleFault)
@@ -569,6 +698,16 @@ func (r *recoveryRunner) writeMetricsTextfile(path string) error {
 	return os.Rename(f.Name(), path)
 }
 
+func (r *recoveryRunner) checkpointCrash(fss *fuse.FuseServerService) error {
+	r.repairMu.Lock()
+	defer r.repairMu.Unlock()
+	var ticker func(string) bool
+	if r.workers != nil {
+		ticker = r.workers.TickerEnabled
+	}
+	return state.SaveRestart(r.css, fss.StateContainer, fsRestartFile, r.root, false, ticker)
+}
+
 func (r *recoveryRunner) exportMetrics(ctx context.Context, path string) {
 	defer os.Remove(path)
 	ticker := time.NewTicker(15 * time.Second)
@@ -612,6 +751,26 @@ func (r *recoveryRunner) serveMetrics(path string) (func(), error) {
 func runRecoverable(r *recoveryRunner, ipc domain.IpcServiceIface, fss *fuse.FuseServerService, quiesce func() error, profile interface{ Stop() }) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	checkpointDone := make(chan struct{})
+	if os.Getenv("SYSRUNC_FD_BROKER_SOCKET") != "" {
+		go func() {
+			defer close(checkpointDone)
+			interval := time.NewTicker(time.Second)
+			defer interval.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-interval.C:
+					if err := r.checkpointCrash(fss); err != nil {
+						logrus.WithError(err).Warn("FS crash checkpoint update failed")
+					}
+				}
+			}
+		}()
+	} else {
+		close(checkpointDone)
+	}
 	eventResult := make(chan error, 1)
 	go func() { eventResult <- r.run(ctx) }()
 	signals := make(chan os.Signal, 1)
@@ -648,13 +807,18 @@ func runRecoverable(r *recoveryRunner, ipc domain.IpcServiceIface, fss *fuse.Fus
 		return err
 	}
 	cancel()
+	<-checkpointDone
 	if err := <-eventResult; err != nil {
 		return err
 	}
 	r.repairMu.Lock()
 	defer r.repairMu.Unlock()
 	fss.Quiesce()
-	if err := state.SaveRestart(r.css, fss.StateContainer, fsRestartFile, r.root, true); err != nil {
+	var ticker func(string) bool
+	if r.workers != nil {
+		ticker = r.workers.TickerEnabled
+	}
+	if err := state.SaveRestart(r.css, fss.StateContainer, fsRestartFile, r.root, true, ticker); err != nil {
 		return err
 	}
 	if err := fss.DetachForRestart(); err != nil {
