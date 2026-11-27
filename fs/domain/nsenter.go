@@ -31,9 +31,9 @@ const (
 	NStypeMount  NStype = "mnt"
 )
 
-// Security note: nsenter processes spawned by sysbox-fs that enter the pid
+// Security note: nsenter processes spawned by sysrunc-fs that enter the pid
 // namespace must also enter the container's mount ns, as otherwise the nsenter
-// process will inherit sysbox-fs host mounts, resulting in a process inside the
+// process will inherit sysrunc-fs host mounts, resulting in a process inside the
 // container that exposes info about those mounts. If needed, the nsenter
 // process can always unshare the mount ns inside the container so that it can
 // perform mounts without affecting the container processes.
@@ -102,7 +102,7 @@ const (
 )
 
 // NSenterService interface serves as a wrapper construct to provide a
-// communication channel between sysbox-fs 'master' and sysbox-fs 'child'
+// communication channel between sysrunc-fs 'master' and sysrunc-fs 'child'
 // entities. See more details further below.
 type NSenterServiceIface interface {
 	NewEvent(
@@ -123,10 +123,10 @@ type NSenterServiceIface interface {
 }
 
 // NSenterEvent struct serves as a transport abstraction (envelope) to carry
-// all the potential messages that can be exchanged between sysbox-fs master
-// instance and secondary (forked) ones. These sysbox-fs' auxiliary instances
+// all the potential messages that can be exchanged between sysrunc-fs master
+// instance and secondary (forked) ones. These sysrunc-fs' auxiliary instances
 // are utilized to perform actions over namespaced resources, and as such,
-// cannot be executed by sysbox-fs' main instance.
+// cannot be executed by sysrunc-fs' main instance.
 //
 // Every bidirectional transaction is represented by an event structure
 // (nsenterEvent), which holds both 'request' and 'response' messages, as well
@@ -144,7 +144,7 @@ type NSenterEventIface interface {
 }
 
 // NSenterMessage struct defines the layout of the messages being exchanged
-// between sysbox-fs 'main' and 'forked' ones.
+// between sysrunc-fs 'main' and 'forked' ones.
 type NSenterMessage struct {
 	// Message type being exchanged.
 	Type NSenterMsgType `json:"message"`
@@ -155,7 +155,7 @@ type NSenterMessage struct {
 
 type NSenterMsgHeader struct {
 	// Note: pid, uid, and gid, and file descriptors are sent apart via socket control messages (SCM) creds/rights.
-	// This way the kernel automatically translates them across process namespaces (e.g., from sysbox-fs to the nsenter
+	// This way the kernel automatically translates them across process namespaces (e.g., from sysrunc-fs to the nsenter
 	// process namespaces for nsenter requests, or vice-versa for nsenter responses).
 	Root         string    `json:"root"`
 	Cwd          string    `json:"cwd"`
@@ -291,12 +291,12 @@ type GidInfoRespPayload struct {
 }
 
 type Openat2SyscallPayload struct {
-	Header           NSenterMsgHeader `json:"header"`
-	Path             string           `json:"path"`
-	Flags            uint64           `json:"flags"`
-	Mode             uint64           `json:"mode"`
-	Resolve          uint64           `json:"resolve"`
-	CheckForSysboxfs bool             `json:"verifyfs"`
+	Header            NSenterMsgHeader `json:"header"`
+	Path              string           `json:"path"`
+	Flags             uint64           `json:"flags"`
+	Mode              uint64           `json:"mode"`
+	Resolve           uint64           `json:"resolve"`
+	CheckForSysruncfs bool             `json:"verifyfs"`
 }
 
 type Openat2RespPayload struct {

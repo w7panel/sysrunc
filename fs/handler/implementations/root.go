@@ -29,16 +29,16 @@ import (
 //
 // root dir (/) dummy handler
 //
-// Since the sysbox-fs root dir is not mounted inside a system container,
-// accesses to it are only possible from host level (e.g., via /var/lib/sysboxfs/<container-id>/).
+// Since the sysrunc-fs root dir is not mounted inside a system container,
+// accesses to it are only possible from host level (e.g., via /var/lib/sysruncfs/<container-id>/).
 //
-// Such accesses typically occur when sysbox-runc is creating the container and
-// it bind-mounts sysbox-fs to subdirs under the container's "/proc" or "/sys"
+// Such accesses typically occur when sysrunc is creating the container and
+// it bind-mounts sysrunc-fs to subdirs under the container's "/proc" or "/sys"
 // (e.g., /proc/uptime, /proc/sys, etc); as part of the bind-mount, the kernel
-// walks the bind-source path, which results in sysbox-fs receiving lookups into
+// walks the bind-source path, which results in sysrunc-fs receiving lookups into
 // this handler. Thus, this handler only serves such lookups; all other handler
 // methods are purposefully dummy, as we generally want to ignore accesses to
-// sysbox-fs from host level.
+// sysrunc-fs from host level.
 
 type Root struct {
 	domain.HandlerBase

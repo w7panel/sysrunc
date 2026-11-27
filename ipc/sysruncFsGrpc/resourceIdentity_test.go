@@ -36,14 +36,13 @@ func TestResourceIdentityRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLegacyWireServiceName(t *testing.T) {
-	for _, name := range []string{"sysruncStateChannel", "sysboxStateChannel"} {
-		service := pb.File_sysruncFsProtobuf_proto.Services().ByName(protoreflect.Name(name))
-		if service == nil || string(service.FullName()) != "protobuf."+name {
-			t.Fatalf("gRPC service %s changed: %v", name, service)
-		}
-		if service.Methods().ByName("ContainerRegistration") == nil {
-			t.Fatalf("%s registration method missing", name)
-		}
+func TestWireServiceName(t *testing.T) {
+	name := "sysruncStateChannel"
+	service := pb.File_sysruncFsProtobuf_proto.Services().ByName(protoreflect.Name(name))
+	if service == nil || string(service.FullName()) != "protobuf."+name {
+		t.Fatalf("gRPC service %s changed: %v", name, service)
+	}
+	if service.Methods().ByName("ContainerRegistration") == nil {
+		t.Fatalf("%s registration method missing", name)
 	}
 }

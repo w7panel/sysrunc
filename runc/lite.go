@@ -16,12 +16,10 @@ import (
 
 const (
 	liteRootfsAnnotation          = "sysrunc.io/rootfs-rw-layer"
-	liteLegacyRootfsAnnotation    = "sysbox/rootfs-rw-layer"
 	liteNestedContainerAnnotation = "sysrunc.io/nested-system-container"
 	liteContainerName             = "io.kubernetes.cri.container-name"
 	liteSandboxUID                = "io.kubernetes.cri.sandbox-uid"
 	liteHandoffDir                = "/run/sysrunc/rootfs-pvc-handoff"
-	liteLegacyHandoffDir          = "/run/sysbox/rootfs-pvc-handoff"
 	liteKubeletPodsDir            = "/var/lib/kubelet/pods"
 )
 
@@ -323,11 +321,7 @@ func addLiteSpecialMounts(spec *specs.Spec, id string) error {
 }
 
 func liteRootfsAnnotationValue(spec *specs.Spec) (string, string) {
-	raw := spec.Annotations[liteRootfsAnnotation]
-	if raw != "" {
-		return raw, liteRootfsAnnotation
-	}
-	return spec.Annotations[liteLegacyRootfsAnnotation], liteLegacyRootfsAnnotation
+	return spec.Annotations[liteRootfsAnnotation], liteRootfsAnnotation
 }
 
 func liteRootfsEnabled(spec *specs.Spec) bool {
@@ -384,10 +378,6 @@ func loadLiteHandoff(id string) (liteHandoff, error) {
 	sum := sha256.Sum256([]byte(id))
 	path := filepath.Join(liteHandoffDir, hex.EncodeToString(sum[:])+".json")
 	f, err := os.Open(path)
-	if os.IsNotExist(err) {
-		path = filepath.Join(liteLegacyHandoffDir, hex.EncodeToString(sum[:])+".json")
-		f, err = os.Open(path)
-	}
 	if err != nil {
 		return liteHandoff{}, fmt.Errorf("open persistent special handoff: %w", err)
 	}

@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/w7panel/sysrunc/fs/domain"
 	"github.com/w7panel/sysrunc/fs/handler/implementations"
 	"github.com/w7panel/sysrunc/fs/mocks"
@@ -33,11 +34,10 @@ import (
 	"github.com/w7panel/sysrunc/fs/process"
 	"github.com/w7panel/sysrunc/fs/state"
 	"github.com/w7panel/sysrunc/fs/sysio"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
 
-// Sysbox-fs global services for all handler's testing consumption.
+// Sysrunc-fs global services for all handler's testing consumption.
 var css domain.ContainerStateServiceIface
 var mts domain.MountServiceIface
 var ios domain.IOServiceIface

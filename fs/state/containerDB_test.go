@@ -23,14 +23,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/w7panel/sysrunc/fs/domain"
 	"github.com/w7panel/sysrunc/fs/mocks"
 	"github.com/w7panel/sysrunc/fs/process"
 	"github.com/w7panel/sysrunc/fs/sysio"
-	"github.com/sirupsen/logrus"
 )
 
-// Sysbox-fs global services for all state's pkg unit-tests.
+// Sysrunc-fs global services for all state's pkg unit-tests.
 var ios domain.IOServiceIface
 var prs domain.ProcessServiceIface
 var nss *mocks.NSenterServiceIface
@@ -662,7 +662,7 @@ func Test_containerStateService_ContainerUnregister(t *testing.T) {
 			//
 			// Test-case 3: Unregister a container with valid ID but with missing
 			// netns. Error not expected (this can happen when a container pre-registers
-			// and immediately unregisters due to some error in sysbox-runc).
+			// and immediately unregisters due to some error in sysrunc).
 			//
 			name:    "3",
 			fields:  f1,

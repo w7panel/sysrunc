@@ -61,9 +61,6 @@ func (r *ContainerdIdentityResolver) ResolveIdentity(ctx context.Context, snapsh
 	}
 	if spec != nil && spec.Annotations != nil {
 		request.RootfsRwLayerAnnotation = spec.Annotations[AnnotationRootfsRwLayer]
-		if request.RootfsRwLayerAnnotation == "" {
-			request.RootfsRwLayerAnnotation = spec.Annotations[LegacyRootfsRwLayer]
-		}
 	}
 	return request, nil
 }

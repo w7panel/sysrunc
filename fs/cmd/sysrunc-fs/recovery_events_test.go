@@ -64,8 +64,8 @@ func TestRecoveryEventsContinueWhileRepairBlocks(t *testing.T) {
 	for {
 		var metrics bytes.Buffer
 		r.writeMetrics(&metrics)
-		if strings.Contains(metrics.String(), "sysbox_fs_recovery_fault_events_total 301\n") &&
-			strings.Contains(metrics.String(), "sysbox_fs_recovery_dropped_fault_events_total 44\n") {
+		if strings.Contains(metrics.String(), "sysrunc_fs_recovery_fault_events_total 301\n") &&
+			strings.Contains(metrics.String(), "sysrunc_fs_recovery_dropped_fault_events_total 44\n") {
 			break
 		}
 		if time.Now().After(deadline) {

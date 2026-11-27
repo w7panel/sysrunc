@@ -48,7 +48,7 @@ application Pod. Empty or `false` annotations create no special mounts.
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysrunc]
   runtime_type = "io.containerd.runc.v2"
   snapshotter = "sysrunc"
-  pod_annotations = ["sysrunc.io/rootfs-rw-layer", "sysbox/rootfs-rw-layer"]
+  pod_annotations = ["sysrunc.io/rootfs-rw-layer"]
 ```
 
 ## Remap Contract

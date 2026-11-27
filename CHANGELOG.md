@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Use only the `sysrunc` runtime name and `sysrunc.io/*` annotations. Remove the old runtime executable aliases, rootfs annotation and handoff fallbacks, dual gRPC service, and Chart compatibility switch. Rename the FUSE source, snapshotter plugin ID, metrics, and user-facing diagnostics to Sysrunc.
 - Remove the stale FUSE submodule declaration; the vendored `fs/bazil` sources are already tracked directly in this repository.
 - Move the remaining container-cached virtual proc/sys values into each registered proc worker's state and replay successful writes after a worker restart. Seed complete values on the first host-backed read, including when the caller requests only one byte; retain existing write validation and host-side behavior.
 - Move four host-absent virtual sysctls into per-container proc worker state, replay writes after worker restart, and align seccomp reads with the shared FUSE state for containers in one network namespace. Serialize concurrent writes to preserve replay order; verified read and restart behavior on 218.

@@ -69,7 +69,7 @@ func GenerateCertificateBundle(config CertificateConfig) (CertificateBundle, err
 	}
 	caTemplate := &x509.Certificate{
 		SerialNumber:          caSerial,
-		Subject:               pkix.Name{CommonName: "sysbox-admission-webhook-ca"},
+		Subject:               pkix.Name{CommonName: "sysrunc-admission-webhook-ca"},
 		NotBefore:             issuedAt.Add(-time.Minute),
 		NotAfter:              issuedAt.Add(caValidity),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,

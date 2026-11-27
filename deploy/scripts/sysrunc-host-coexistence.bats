@@ -7,7 +7,6 @@ setup() {
   mkdir -p "$test_root/bin" "$test_root/var" "$test_root/artifacts" "$test_root/containerd" "$test_root/etc"
   host_bin="$test_root/bin"
   host_etc="$test_root/etc"
-  touch "$host_etc/subuid" "$host_etc/subgid"
   host_var_lib_sysrunc_deploy_k8s="$test_root/var"
   host_k3s_containerd_conf_dir="$test_root/containerd"
   host_k3s_containerd_conf_template="$host_k3s_containerd_conf_dir/config-v3.toml.tmpl"
@@ -32,6 +31,16 @@ setup() {
   [ "$(cat "$host_bin/sysbox-runc-lite")" = 'old Sysbox lite runtime' ]
 }
 
+@test "host binary removal leaves existing subordinate ID files intact" {
+  printf 'containers:100000:65536\n' > "$host_etc/subuid"
+  printf 'containers:100000:65536\n' > "$host_etc/subgid"
+
+  rm_sysrunc_from_host
+
+  [ "$(cat "$host_etc/subuid")" = 'containers:100000:65536' ]
+  [ "$(cat "$host_etc/subgid")" = 'containers:100000:65536' ]
+}
+
 @test "same-version rebuilt artifact triggers host update" {
   copy_sysrunc_to_host
   run is_sysrunc_artifact_changed
@@ -51,10 +60,10 @@ setup() {
   cat > "$host_k3s_containerd_conf_template" <<'EOF'
 version = 3
 
-[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysbox-runc]
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysrunc-runc]
   runtime_type = "io.containerd.runc.v2"
 
-[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysbox-runc.options]
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysrunc-runc.options]
   BinaryName = "/usr/bin/sysbox-runc"
 
 EOF

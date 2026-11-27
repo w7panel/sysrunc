@@ -52,7 +52,6 @@ require (
 	github.com/w7panel/sysrunc/libs/idShiftUtils v0.0.0-00010101000000-000000000000 // indirect
 	github.com/w7panel/sysrunc/libs/mount v0.0.0-20240602025437-33cbdf5a9e98 // indirect
 	github.com/w7panel/sysrunc/libs/overlayUtils v0.0.0-00010101000000-000000000000 // indirect
-	github.com/w7panel/sysrunc/libs/shiftfs v0.0.0-00010101000000-000000000000 // indirect
 	github.com/opencontainers/runtime-spec v1.1.1-0.20230823135140-4fec88fd00a4 // indirect
 	github.com/opencontainers/selinux v1.13.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

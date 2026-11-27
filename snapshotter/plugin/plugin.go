@@ -16,7 +16,7 @@
    limitations under the License.
 */
 
-package sysboxsnapshotter
+package sysruncsnapshotter
 
 import (
 	"errors"
@@ -25,10 +25,10 @@ import (
 	"github.com/containerd/platforms"
 	"github.com/containerd/plugin"
 	"github.com/containerd/plugin/registry"
-	sysboxsnapshotter "github.com/w7panel/sysrunc/snapshotter"
+	sysruncsnapshotter "github.com/w7panel/sysrunc/snapshotter"
 )
 
-// Config represents configuration for the sysbox snapshotter plugin.
+// Config represents configuration for the sysrunc snapshotter plugin.
 type Config struct {
 	// Root directory for the plugin
 	RootPath string `toml:"root_path"`
@@ -37,14 +37,14 @@ type Config struct {
 func init() {
 	registry.Register(&plugin.Registration{
 		Type:   plugins.SnapshotPlugin,
-		ID:     "sysbox",
+		ID:     "sysrunc",
 		Config: &Config{},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
 			ic.Meta.Platforms = append(ic.Meta.Platforms, platforms.DefaultSpec())
 
 			config, ok := ic.Config.(*Config)
 			if !ok {
-				return nil, errors.New("invalid sysbox snapshotter configuration")
+				return nil, errors.New("invalid sysrunc snapshotter configuration")
 			}
 
 			root := ic.Properties[plugins.PropertyRootDir]
@@ -53,7 +53,7 @@ func init() {
 			}
 
 			ic.Meta.Exports["root"] = root
-			return sysboxsnapshotter.NewSnapshotter(root)
+			return sysruncsnapshotter.NewSnapshotter(root)
 		},
 	})
 }

@@ -415,7 +415,7 @@ state = "/run/k3s/containerd"
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysrunc]
   runtime_type = "io.containerd.runc.v2"
   snapshotter = "sysrunc"
-  pod_annotations = ["sysrunc.io/rootfs-rw-layer", "sysbox/rootfs-rw-layer", "sysrunc.io/fs", "sysrunc.io/ticker"]
+  pod_annotations = ["sysrunc.io/rootfs-rw-layer", "sysrunc.io/fs", "sysrunc.io/ticker"]
 
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysrunc.options]
   SystemdCgroup = false

@@ -1,5 +1,17 @@
 # Migration status
 
+## Latest 218 result, 2026-11-27: Sysrunc-only runtime interface
+
+The retired `sysbox-runc` executable aliases, Sysbox rootfs annotation, legacy
+gRPC state service, and legacy RuntimeClass management have been removed from
+the active Sysrunc interface. The runtime uses `sysrunc.io/*` annotations and
+the FUSE source is `sysruncfs`. L0 Helm revision 21 and L1 revision 55 run the
+same image digest `sha256:d0c8c226bee4dd57ed4efcdfa8990d299b35acc54beaa00a40ab193b298368f6`
+for installer and admission. The dedicated CKM Server and three L2 test Pods
+are Ready. The old rootfs annotation did not inject a sidecar; the Sysrunc
+rootfs Pod retained its persistent marker after the L0 rollout. See
+`INTEGRATION_218.md` for the test details. Earlier results below are historical.
+
 ## Latest 218 result, 2026-11-27
 
 The L0 node rollback path has now passed an uninstall and reinstall on 218.

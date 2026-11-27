@@ -31,14 +31,14 @@ import (
 	"github.com/w7panel/sysrunc/fs/domain"
 )
 
-// FuseServer class in charge of running/hosting sysbox-fs' FUSE server features.
+// FuseServer class in charge of running/hosting sysrunc-fs' FUSE server features.
 type fuseServer struct {
 	resourceOwner   *domain.ResourceOwner
 	resourceRelease sync.Once
 	sync.RWMutex                             // nodeDB protection
 	conn            *bfuse.Conn              // Associated fuse connection
 	path            string                   // fs path to emulate -- "/" by default
-	mountPoint      string                   // mountpoint -- "/var/lib/sysboxfs" by default
+	mountPoint      string                   // mountpoint -- "/var/lib/sysruncfs" by default
 	container       domain.ContainerIface    // associated sys container
 	containerUid    uint32                   // container UID for caching purposes
 	containerGid    uint32                   // container GID for caching purposes
@@ -99,7 +99,7 @@ func (s *fuseServer) Create() error {
 	}
 
 	// Create a first node corresponding to the root (dir) element in
-	// sysbox-fs.
+	// sysrunc-fs.
 	var attr bfuse.Attr
 	if s.service.ios.GetServiceType() == domain.IOMemFileService {
 		attr = bfuse.Attr{}
@@ -108,7 +108,7 @@ func (s *fuseServer) Create() error {
 	}
 	attr.Mode = os.ModeDir | os.FileMode(int(0600))
 
-	// Build sysbox-fs top-most directory (root).
+	// Build sysrunc-fs top-most directory (root).
 	request := &domain.HandlerRequest{
 		Name: s.path,
 		Path: s.path,
@@ -132,11 +132,11 @@ func (s *fuseServer) Run() error {
 	//
 	// The "DefaultPermissions" flag serves to instruct the kernel to perform
 	// its own permission check, instead of deferring all permission checking
-	// to sysbox-fs filesystem.
+	// to sysrunc-fs filesystem.
 	//
 	c, err := bfuse.Mount(
 		s.mountPoint,
-		bfuse.FSName("sysboxfs"),
+		bfuse.FSName("sysruncfs"),
 		bfuse.AllowOther(),
 		bfuse.DefaultPermissions(),
 	)
@@ -180,7 +180,7 @@ func (s *fuseServer) Run() error {
 
 func (s *fuseServer) Destroy() error {
 
-	// Unmount sysboxfs from mountpoint.
+	// Unmount sysruncfs from mountpoint.
 	err := unmountFuse(s.mountPoint)
 	if err != nil {
 		logrus.Errorf("FUSE file-system could not be unmounted: %v", err)
@@ -209,7 +209,7 @@ func unmountFuse(path string) error {
 }
 
 // Root method. This is a Bazil-FUSE-lib requirement. Function returns
-// sysbox-fs' root-node.
+// sysrunc-fs' root-node.
 func (s *fuseServer) Root() (bfusefs.Node, error) {
 
 	return s.root, nil

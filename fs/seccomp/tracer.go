@@ -515,7 +515,7 @@ func (t *syscallTracer) connHandler(c *net.UnixConn) {
 		}
 	}
 
-	// Send Ack message back to sysbox-runc.
+	// Send Ack message back to sysrunc.
 	if err = unixIpc.SendSeccompInitAckMsg(c); err != nil {
 		t.recoveryMu.RUnlock()
 		if t.service.retainsListeners() {
@@ -675,7 +675,7 @@ func (t *syscallTracer) processSyscall(
 			formatter.ContainerID{cntrID})
 		// A Sysbox CKM server runs an inner container runtime. Its child
 		// containers inherit the outer openat2 user-notify filter, but are not
-		// registered in the outer sysbox-fs container store. openat2 itself is
+		// registered in the outer sysrunc-fs container store. openat2 itself is
 		// safe to execute in the kernel and K3s needs it for cgroupfs and procfs
 		// access. Returning EPERM here prevents every inner Pod from starting.
 		// Do not relax the other trapped syscalls: they require a known Sysbox
@@ -922,7 +922,7 @@ func (t *syscallTracer) processUmount(
 			// inside the container, where the path walk to the FUSE mountpoint
 			// does not work unless we enter the container's user and mount
 			// namespaces (see Sysbox issue 854). Since this never occurs for
-			// sysbox-fs managed mounts, let the kernel handle the response (i.e.,
+			// sysrunc-fs managed mounts, let the kernel handle the response (i.e.,
 			// for user-created FUSE mounts, the kernel will do the proper path
 			// walk within the required namespaces and allow or disallow the
 			// unmount as appropriate).

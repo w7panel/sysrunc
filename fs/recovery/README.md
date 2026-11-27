@@ -8,16 +8,14 @@ Unsupported hosts fail startup explicitly.
 
 On graceful stop, FS drains registration and seccomp requests, quiesces FUSE
 reads/writes, checkpoints registered containers and their original mount policy,
-and detaches host FUSE mounts. Systemd retains seccomp listeners. Mgr separately
-checkpoints its container, volume, clone and shiftfs ownership without deleting
-live resources. Live-session restoration requires the same boot and a clean stop. After a host
-reboot, mgr archives its previous work directories (without deleting data or
-touching snapshotter storage) and initializes fresh kernel state. The archive
-path is logged for explicit data recovery.
+and detaches host FUSE mounts. Systemd retains seccomp listeners. Live-session
+restoration requires the same boot and a clean stop. After a host reboot, FS
+starts with fresh kernel state; persistent rootfs data remains under the PVC
+managed by the snapshotter.
 
 On startup, FS recreates registered views and listeners. BPF reports ENOTCONN/EIO
 on checkpointed FUSE devices, deduplicated per namespace/device for one second.
-The helper pins the target namespace and root, clones only the matching sysboxfs
+The helper pins the target namespace and root, clones only the matching sysruncfs
 mounts, retains their access flags and overlays the old mounts. A minute fallback
 checks registered containers and mount namespaces in their cgroup subtrees; it
 does not scan unrelated host processes. New opens

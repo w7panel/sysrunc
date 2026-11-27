@@ -34,10 +34,10 @@ func TestMain(m *testing.M) {
 }
 
 func TestMountPlanWhitelistAndAttributes(t *testing.T) {
-	input := `10 1 0:21 /proc/meminfo /proc/meminfo ro,nosuid,nodev,noexec,relatime - fuse sysboxfs rw
-11 1 0:22 / /unrelated rw - fuse sysboxfs rw
+	input := `10 1 0:21 /proc/meminfo /proc/meminfo ro,nosuid,nodev,noexec,relatime - fuse sysruncfs rw
+11 1 0:22 / /unrelated rw - fuse sysruncfs rw
 12 1 0:21 / /wrong-source rw - fuse other rw
-13 1 0:21 / /wrong-type rw - ext4 sysboxfs rw
+13 1 0:21 / /wrong-type rw - ext4 sysruncfs rw
 `
 	plan, err := mountPlan(strings.NewReader(input), []Device{{0, 21}})
 	if err != nil {
@@ -141,7 +141,7 @@ func TestMountRecoveryPrivileged(t *testing.T) {
 		t.Fatal(err)
 	}
 	mountFS := func(path, value string) *fuse.Conn {
-		conn, err := fuse.Mount(path, fuse.FSName("sysboxfs"))
+		conn, err := fuse.Mount(path, fuse.FSName("sysruncfs"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -397,14 +397,14 @@ func TestMountRecoveryPrivileged(t *testing.T) {
 }
 
 func TestReusedDeviceBelongingToLiveHostSession(t *testing.T) {
-	mounts, err := mountinfo.GetMountsFromReader(strings.NewReader("11 1 0:22 / /var/lib/sysboxfs/other rw - fuse sysboxfs rw\n12 1 0:23 / /outside rw - fuse sysboxfs rw\n"), nil)
+	mounts, err := mountinfo.GetMountsFromReader(strings.NewReader("11 1 0:22 / /var/lib/sysruncfs/other rw - fuse sysruncfs rw\n12 1 0:23 / /outside rw - fuse sysruncfs rw\n"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !deviceInHostTree(mounts, "/var/lib/sysboxfs", Device{0, 22}) {
+	if !deviceInHostTree(mounts, "/var/lib/sysruncfs", Device{0, 22}) {
 		t.Fatal("live reused device accepted")
 	}
-	if deviceInHostTree(mounts, "/var/lib/sysboxfs", Device{0, 23}) {
+	if deviceInHostTree(mounts, "/var/lib/sysruncfs", Device{0, 23}) {
 		t.Fatal("unrelated tree rejected")
 	}
 	if deviceInHostTree(mounts, "/var/lib/sysbox", Device{0, 22}) {

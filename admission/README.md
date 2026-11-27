@@ -1,28 +1,24 @@
 # sysrunc-admission
 
-The webhook handles Pods using the `sysrunc` RuntimeClass and the legacy
-`sysbox-runc` and `sysbox-runc-lite` names. The new `sysrunc` path leaves
-`hostUsers` unchanged. The legacy `sysbox-runc` FS path requires
-`hostUsers: false`.
+The webhook handles Pods using the `sysrunc` RuntimeClass and leaves
+`hostUsers` unchanged.
 
 `sysrunc-admission` validates the `sysrunc.io/rootfs-rw-layer` Pod annotation
 and injects a canonical `sysrunc-rootfs` sidecar so `sysrunc-snapshotter` can
 resolve PVC-backed rootfs upper/work directories safely. Application containers
-never receive the rootfs PVC mount directly. The old `sysbox/rootfs-rw-layer`
-annotation remains accepted for migration.
+never receive the rootfs PVC mount directly.
 
 Empty writable CSI and K3s local-path PVCs are initialized by `sysrunc` from
-their kubelet mount paths; no `sysbox/volume-init` Pod or OCI annotation is
-created or consumed. Existing data is never overwritten, and unrecognized
+their kubelet mount paths. Existing data is never overwritten, and unrecognized
 storage paths are skipped.
 
 The webhook handles Pod `CREATE` requests when either of these conditions applies:
 
-- `spec.runtimeClassName` is `sysrunc`, `sysbox-runc`, or `sysbox-runc-lite`.
-- Either rootfs rw-layer annotation is present, including an empty value.
+- `spec.runtimeClassName` is `sysrunc`.
+- The `sysrunc.io/rootfs-rw-layer` annotation is present, including an empty value.
 
 The webhook never selects a RuntimeClass. A nonempty, enabled rootfs annotation
-requires one of the managed RuntimeClasses. An empty value or `false` disables
+requires the `sysrunc` RuntimeClass. An empty value or `false` disables
 the rootfs rw-layer and does not create persistent special mounts.
 
 PVC initialization works without a rootfs annotation. The sidecar is injected
@@ -93,7 +89,7 @@ The sidecar does not carry rootfs rw-layer intent in environment variables. Root
 
 ```toml
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysrunc]
-  pod_annotations = ["sysrunc.io/rootfs-rw-layer", "sysbox/rootfs-rw-layer"]
+  pod_annotations = ["sysrunc.io/rootfs-rw-layer"]
 ```
 
 `sysrunc-snapshotter` reads that OCI annotation for container intent and reads

@@ -42,7 +42,7 @@ func canEarlyContinueOpenat2(path string, dirfd int32, resolve uint64) bool {
 		return false
 	}
 
-	return !mount.IsSysboxfsMount(path)
+	return !mount.IsSysruncfsMount(path)
 }
 
 func isProcRootAlias(path string) bool {
@@ -170,8 +170,8 @@ func (si *openat2SyscallInfo) processOpenat2() (*sysResponse, error) {
 		logrus.Debugf("openat2: pid: %d: failed to resolve /proc/self in path %s: %v", si.pid, si.path, err)
 	}
 
-	// Check if the path is under a sysbox-fs mount
-	if mount.IsSysboxfsMount(fullPath) {
+	// Check if the path is under a sysrunc-fs mount
+	if mount.IsSysruncfsMount(fullPath) {
 		// Only managed paths need the caller's credentials and namespace
 		// execution context; most relative opens can continue in the kernel.
 		si.uid = si.processInfo.Uid()
@@ -182,11 +182,11 @@ func (si *openat2SyscallInfo) processOpenat2() (*sysResponse, error) {
 		si.root = si.processInfo.Root()
 		si.caps = si.processInfo.GetEffCaps()
 
-		logrus.Debugf("openat2(): pid: %d: path under sysbox-fs mount detected: path = %s, flags = %#x, mode = %#x, resolve = %#x",
+		logrus.Debugf("openat2(): pid: %d: path under sysrunc-fs mount detected: path = %s, flags = %#x, mode = %#x, resolve = %#x",
 			si.pid, fullPath, si.flags, si.mode, si.resolve)
 
 		// Drop some of the RESOLVE_* flags. These flags restrict path resolution in ways that don't work due
-		// to sysbox-fs emulating some resources under /proc/sys/.
+		// to sysrunc-fs emulating some resources under /proc/sys/.
 		cleanResolve := si.resolve &^ (RESOLVE_NO_XDEV | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH)
 		cleanFlags := si.flags &^ unix.O_PATH
 
@@ -197,11 +197,11 @@ func (si *openat2SyscallInfo) processOpenat2() (*sysResponse, error) {
 				Cwd:          si.cwd,
 				Capabilities: si.caps,
 			},
-			Path:             fullPath,
-			Flags:            cleanFlags,
-			Mode:             si.mode,
-			Resolve:          cleanResolve,
-			CheckForSysboxfs: true, // ensure the openat2 is opening a sysbox-fs managed file
+			Path:              fullPath,
+			Flags:             cleanFlags,
+			Mode:              si.mode,
+			Resolve:           cleanResolve,
+			CheckForSysruncfs: true, // ensure the openat2 is opening a sysrunc-fs managed file
 		}
 
 		nss := t.service.nss
@@ -234,7 +234,7 @@ func (si *openat2SyscallInfo) processOpenat2() (*sysResponse, error) {
 			return resp, nil
 		}
 
-		// Extract the opened file descriptor from the response (passed to sysbox-fs via SCM_RIGHTS by the nsenter process)
+		// Extract the opened file descriptor from the response (passed to sysrunc-fs via SCM_RIGHTS by the nsenter process)
 		respPayload := responseMsg.Payload.(domain.Openat2RespPayload)
 		fd := respPayload.Fd
 
@@ -243,7 +243,7 @@ func (si *openat2SyscallInfo) processOpenat2() (*sysResponse, error) {
 		// Inject the file descriptor into the traced process using SECCOMP_IOCTL_NOTIF_ADDFD
 		targetFd, err := si.injectFd(fd)
 
-		// Close the fd in sysbox-fs after injecting it (the target process now has a copy)
+		// Close the fd in sysrunc-fs after injecting it (the target process now has a copy)
 		unix.Close(fd)
 
 		if err != nil {

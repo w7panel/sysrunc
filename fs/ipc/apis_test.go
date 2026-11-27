@@ -31,7 +31,7 @@ import (
 	grpc "github.com/w7panel/sysrunc/ipc/sysruncFsGrpc"
 )
 
-// Sysbox-fs global services for all state's pkg unit-tests.
+// Sysrunc-fs global services for all state's pkg unit-tests.
 var css *mocks.ContainerStateServiceIface
 
 func TestMain(m *testing.M) {
@@ -79,7 +79,7 @@ func Test_ipcService_Setup(t *testing.T) {
 		css:        css,
 		prs:        nil,
 		ios:        nil,
-		fuseMp:     "/var/lib/sysboxfs",
+		fuseMp:     "/var/lib/sysruncfs",
 	}
 
 	type args struct {
@@ -92,7 +92,7 @@ func Test_ipcService_Setup(t *testing.T) {
 		css:    css,
 		prs:    nil,
 		ios:    nil,
-		fuseMp: "/var/lib/sysboxfs",
+		fuseMp: "/var/lib/sysruncfs",
 	}
 
 	tests := []struct {
@@ -145,7 +145,7 @@ func TestContainerPreRegister(t *testing.T) {
 	}
 
 	var ctx = ipc.NewIpcService()
-	ctx.Setup(css, nil, nil, "/var/lib/sysboxfs")
+	ctx.Setup(css, nil, nil, "/var/lib/sysruncfs")
 
 	var a1 = args{
 		ctx: ctx,
@@ -220,7 +220,7 @@ func TestContainerRegister(t *testing.T) {
 	var c1 domain.ContainerIface
 
 	var ctx = ipc.NewIpcService()
-	ctx.Setup(css, nil, nil, "/var/lib/sysboxfs")
+	ctx.Setup(css, nil, nil, "/var/lib/sysruncfs")
 
 	var a1 = args{
 		ctx: ctx,
@@ -330,7 +330,7 @@ func TestContainerUnregister(t *testing.T) {
 	)
 
 	var ctx = ipc.NewIpcService()
-	ctx.Setup(css, nil, nil, "/var/lib/sysboxfs")
+	ctx.Setup(css, nil, nil, "/var/lib/sysruncfs")
 
 	var a1 = args{
 		ctx: ctx,
@@ -405,7 +405,7 @@ func TestContainerUpdate(t *testing.T) {
 	var c1 domain.ContainerIface
 
 	var ctx = ipc.NewIpcService()
-	ctx.Setup(css, nil, nil, "/var/lib/sysboxfs")
+	ctx.Setup(css, nil, nil, "/var/lib/sysruncfs")
 
 	var a1 = args{
 		ctx: ctx,

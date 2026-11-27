@@ -66,29 +66,6 @@ host_k3s_containerd_conf_template="${host_k3s_containerd_conf_dir}/config-v3.tom
 host_k3s_containerd_conf_template_backup="${host_k3s_containerd_conf_template}.orig"
 host_var_lib_sysrunc_deploy_k8s="${host_var_lib}/sysrunc-deploy-k8s"
 
-#
-# Subid default values.
-#
-# Sysrunc supports up 4K sys containers per K8s node, each with 64K subids.
-#
-# Historical note: prior to Docker's acquisition of Nesytbox, Sysrunc-CE was
-# limited to 16-pods-per-node via variable subid_alloc_min_range below, whereas
-# Sysrunc-EE was limited to 4K-pods-per-node. After Docker's acquisition of
-# Nestybox (05/22) Sysrunc-EE is no longer being offered and therefore Docker has
-# decided to lift the Sysrunc-CE limit to encourage adoption of Sysrunc on K8s
-# clusters (the limit will now be 4K-pods-per-node as it was in Sysrunc-EE).
-#
-subid_alloc_min_start=100000
-subid_alloc_min_range=268435456
-subid_alloc_max_end=4294967295
-
-# We use CRI-O's default user "containers" for the sub-id range (rather than
-# user "sysrunc").
-subid_user="containers"
-subid_def_file="${host_etc}/login.defs"
-subuid_file="${host_etc}/subuid"
-subgid_file="${host_etc}/subgid"
-
 # Current OS distro and kernel release
 os_distro_release=""
 os_kernel_release=""
@@ -229,11 +206,6 @@ function config_crio() {
 	# Disable selinux for now.
 	dasel put bool -f ${host_crio_conf_file} -p toml -m "crio.runtime.selinux" false
 
-	# Add user "containers" to the /etc/subuid and /etc/subgid files
-	get_subid_limits
-	config_subid_range "$subuid_file" "$subid_alloc_min_range" "$subuid_min" "$subuid_max"
-	config_subid_range "$subgid_file" "$subid_alloc_min_range" "$subgid_min" "$subgid_max"
-
 	# Set capabilities to match default caps in containerd/docker
 	dasel put string -f ${host_crio_conf_file} -p toml -m 'crio.runtime.default_capabilities.[]' "CHOWN"
 	dasel put string -f ${host_crio_conf_file} -p toml -m 'crio.runtime.default_capabilities.[]' "DAC_OVERRIDE"
@@ -336,10 +308,6 @@ function rm_sysrunc_from_host() {
 	rm -f "${host_bin}/sysrunc-snapshotter"
 	rm -f "${host_bin}/sysrunc-admission"
 
-	# Remove sysrunc from the /etc/subuid and /etc/subgid files
-	sed -i '/sysrunc:/d' "${host_etc}/subuid"
-	sed -i '/sysrunc:/d' "${host_etc}/subgid"
-
 	rm -f "${host_var_lib_sysrunc_deploy_k8s}/sysrunc_installed_version"
 	rm -f "${host_var_lib_sysrunc_deploy_k8s}/sysrunc_snapshotter_enabled"
 }
@@ -438,7 +406,6 @@ function config_sysrunc_apparmor() {
 		fi
 	done <<'EOF'
 mount fstype=fuse options=(rw,nosuid,nodev) sysruncfs -> /var/lib/sysruncfs/*/,
-mount fstype=fuse options=(rw,nosuid,nodev) sysboxfs -> /var/lib/sysruncfs/*/,
 umount /var/lib/sysruncfs/*/,
 EOF
 	# Reload even on a retry after a previous parser failure.
@@ -635,101 +602,6 @@ function remove_sysrunc_deps() {
 	true
 }
 
-function get_subid_limits() {
-
-	# Get subid defaults from /etc/login.defs
-
-	subuid_min=$subid_alloc_min_start
-	subuid_max=$subid_alloc_max_end
-	subgid_min=$subid_alloc_min_start
-	subgid_max=$subid_alloc_max_end
-
-	if [ ! -f $subid_def_file ]; then
-		return
-	fi
-
-	set +e
-	res=$(grep "^SUB_UID_MIN" $subid_def_file 2>/dev/null)
-	if [ $? -eq 0 ]; then
-		subuid_min=$(echo $res | cut -d " " -f2)
-	fi
-
-	res=$(grep "^SUB_UID_MAX" $subid_def_file 2>/dev/null)
-	if [ $? -eq 0 ]; then
-		subuid_max=$(echo $res | cut -d " " -f2)
-	fi
-
-	res=$(grep "^SUB_GID_MIN" $subid_def_file 2>/dev/null)
-	if [ $? -eq 0 ]; then
-		subgid_min=$(echo $res | cut -d " " -f2)
-	fi
-
-	res=$(grep "^SUB_GID_MAX" $subid_def_file 2>/dev/null)
-	if [ $? -eq 0 ]; then
-		subgid_max=$(echo $res | cut -d " " -f2)
-	fi
-	set -e
-}
-
-function config_subid_range() {
-	local subid_file=$1
-	local subid_size=$2
-	local subid_min=$3
-	local subid_max=$4
-
-	if [ ! -f $subid_file ] || [ ! -s $subid_file ]; then
-		echo "$subid_user:$subid_min:$subid_size" >"${subid_file}"
-		return
-	fi
-
-	readarray -t subid_entries <"${subid_file}"
-
-	# if a large enough subid config already exists for user $subid_user, there
-	# is nothing to do.
-
-	for entry in "${subid_entries[@]}"; do
-		user=$(echo $entry | cut -d ":" -f1)
-		start=$(echo $entry | cut -d ":" -f2)
-		size=$(echo $entry | cut -d ":" -f3)
-
-		if [[ "$user" == "$subid_user" ]] && [ "$size" -ge "$subid_size" ]; then
-			return
-		fi
-	done
-
-	# Sort subid entries by start range
-	declare -a sorted_subids
-	if [ ${#subid_entries[@]} -gt 0 ]; then
-		readarray -t sorted_subids < <(echo "${subid_entries[@]}" | tr " " "\n" | tr ":" " " | sort -n -k 2)
-	fi
-
-	# allocate a range of subid_alloc_range size
-	hole_start=$subid_min
-
-	for entry in "${sorted_subids[@]}"; do
-		start=$(echo $entry | cut -d " " -f2)
-		size=$(echo $entry | cut -d " " -f3)
-
-		hole_end=$start
-
-		if [ $hole_end -ge $hole_start ] && [ $((hole_end - hole_start)) -ge $subid_size ]; then
-			echo "$subid_user:$hole_start:$subid_size" >>$subid_file
-			return
-		fi
-
-		hole_start=$((start + size))
-	done
-
-	hole_end=$subid_max
-	if [ $((hole_end - hole_start)) -lt $subid_size ]; then
-		echo "failed to allocate $subid_size sub ids in range $subid_min:$subid_max"
-		return
-	else
-		echo "$subid_user:$hole_start:$subid_size" >>$subid_file
-		return
-	fi
-}
-
 function config_crio_for_sysrunc() {
 	echo "Adding Sysrunc to CRI-O config ..."
 
@@ -775,7 +647,7 @@ function config_containerd_runtime() {
 		dasel delete -f "${host_containerd_conf_file}" -p toml -s "${cri_path}.pod_annotations" >/dev/null 2>&1 || true
 		local annotation
 		local index=0
-		for annotation in sysrunc.io/rootfs-rw-layer sysbox/rootfs-rw-layer sysrunc.io/fs sysrunc.io/ticker; do
+		for annotation in sysrunc.io/rootfs-rw-layer sysrunc.io/fs sysrunc.io/ticker; do
 			dasel put string -f "${host_containerd_conf_file}" -p toml -s "${cri_path}.pod_annotations.[${index}]" -v "${annotation}"
 			index=$((index + 1))
 		done
@@ -889,7 +761,7 @@ ${proxy_config}
 
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysrunc]
   runtime_type = "io.containerd.runc.v2"
-  pod_annotations = ["sysrunc.io/rootfs-rw-layer", "sysbox/rootfs-rw-layer", "sysrunc.io/fs", "sysrunc.io/ticker"]
+  pod_annotations = ["sysrunc.io/rootfs-rw-layer", "sysrunc.io/fs", "sysrunc.io/ticker"]
 ${snapshotter_config}
 
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysrunc.options]
@@ -931,7 +803,7 @@ EOF
 
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysrunc]
   runtime_type = "io.containerd.runc.v2"
-  pod_annotations = ["sysrunc.io/rootfs-rw-layer", "sysbox/rootfs-rw-layer", "sysrunc.io/fs", "sysrunc.io/ticker"]
+  pod_annotations = ["sysrunc.io/rootfs-rw-layer", "sysrunc.io/fs", "sysrunc.io/ticker"]
 ${snapshotter_config}
 
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.sysrunc.options]

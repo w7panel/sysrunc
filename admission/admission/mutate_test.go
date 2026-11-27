@@ -63,9 +63,9 @@ func TestMutator_rejectsSpecialPathWithoutOptIn(t *testing.T) {
 	require.ErrorContains(t, err, "specialPath requires persistentSpecialMounts")
 }
 
-func TestMutator_allowsHostUsersTrueForRuncLite(t *testing.T) {
+func TestMutator_allowsHostUsersTrueForSysrunc(t *testing.T) {
 	pod := validRootfsPod()
-	runtimeClass := admission.RuntimeClassRuncLite
+	runtimeClass := admission.RuntimeClassSysrunc
 	hostUsers := false
 	pod.Spec.RuntimeClassName = &runtimeClass
 	pod.Spec.HostUsers = &hostUsers
@@ -75,23 +75,6 @@ func TestMutator_allowsHostUsersTrueForRuncLite(t *testing.T) {
 	hostUsers = true
 	_, err = newTestMutator().Mutate(context.Background(), pod)
 	require.NoError(t, err)
-}
-
-func TestMutator_requiresUserNamespaceForFS(t *testing.T) {
-	runtimeClass := admission.RuntimeClassSysboxRunc
-	pod := &corev1.Pod{Spec: corev1.PodSpec{
-		RuntimeClassName: &runtimeClass,
-		Containers:       []corev1.Container{{Name: "app"}},
-	}}
-	mutated, err := newTestMutator().Mutate(context.Background(), pod)
-	require.NoError(t, err)
-	require.NotNil(t, mutated.Spec.HostUsers)
-	require.False(t, *mutated.Spec.HostUsers)
-
-	hostUsers := true
-	pod.Spec.HostUsers = &hostUsers
-	_, err = newTestMutator().Mutate(context.Background(), pod)
-	require.ErrorContains(t, err, "hostUsers: false")
 }
 
 func TestMutator_sysruncFSDoesNotSetHostUsers(t *testing.T) {
@@ -108,15 +91,13 @@ func TestMutator_sysruncFSDoesNotSetHostUsers(t *testing.T) {
 	require.Nil(t, mutated.Spec.HostUsers)
 }
 
-func TestMutator_acceptsSysruncAndLegacyRootfsAnnotation(t *testing.T) {
+func TestMutator_doesNotAcceptRetiredRootfsAnnotation(t *testing.T) {
 	pod := validRootfsPod()
-	runtimeClass := admission.RuntimeClassSysrunc
-	pod.Spec.RuntimeClassName = &runtimeClass
-	pod.Annotations[admission.LegacyRootfsRwLayer] = pod.Annotations[admission.AnnotationRootfsRwLayer]
 	delete(pod.Annotations, admission.AnnotationRootfsRwLayer)
+	pod.Annotations["sysbox/rootfs-rw-layer"] = `[{"name":"c1","volumeName":"rootfs","path":"containers/c1"}]`
 	mutated, err := newTestMutator().Mutate(context.Background(), pod)
 	require.NoError(t, err)
-	require.Len(t, mutated.Spec.Containers, 3)
+	require.Len(t, mutated.Spec.Containers, 2)
 }
 
 func TestMutator_rejectsTickerWithoutFS(t *testing.T) {
@@ -128,9 +109,9 @@ func TestMutator_rejectsTickerWithoutFS(t *testing.T) {
 	require.ErrorContains(t, err, "requires sysrunc.io/fs=true")
 }
 
-func TestMutator_doesNotInjectFuseDeviceForPlainSysboxRuncPod(t *testing.T) {
+func TestMutator_doesNotInjectFuseDeviceForPlainSysruncPod(t *testing.T) {
 	mutator := newTestMutator()
-	runtimeClass := admission.RuntimeClassSysboxRunc
+	runtimeClass := admission.RuntimeClassSysrunc
 	pod := &corev1.Pod{Spec: corev1.PodSpec{
 		RuntimeClassName: &runtimeClass,
 		Containers:       []corev1.Container{{Name: "ckm"}},
@@ -283,59 +264,12 @@ func TestMutator_leavesUnconfiguredDefaultRuntimePodUnchanged(t *testing.T) {
 	require.Len(t, mutated.Spec.Containers, 2)
 }
 
-func TestMutator_removesLegacyVolumeInitAnnotationForWritablePVCMounts(t *testing.T) {
-	mutator := newTestMutator()
-	runtimeClass := "sysbox-runc"
-	hostUsers := false
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{"sysbox/volume-init": `[{"name":"forged"}]`}},
-		Spec: corev1.PodSpec{
-			RuntimeClassName: &runtimeClass,
-			HostUsers:        &hostUsers,
-			InitContainers:   []corev1.Container{{Name: "init", VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: "/seed", SubPath: "initial"}}}},
-			Containers: []corev1.Container{{Name: "app", VolumeMounts: []corev1.VolumeMount{
-				{Name: "data", MountPath: "/data"},
-				{Name: "readonly", MountPath: "/readonly", ReadOnly: true},
-				{Name: "cache", MountPath: "/cache"},
-			}}},
-			Volumes: []corev1.Volume{
-				{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data-pvc"}}},
-				{Name: "readonly", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "readonly-pvc"}}},
-				{Name: "cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-			},
-		},
-	}
-
-	mutated, err := mutator.Mutate(context.Background(), pod)
-
-	require.NoError(t, err)
-	_, found := mutated.Annotations["sysbox/volume-init"]
-	require.False(t, found)
-	require.Len(t, mutated.Spec.Containers, 1)
-}
-
-func TestMutator_removesForgedVolumeInitAnnotationWithoutWritablePVC(t *testing.T) {
-	mutator := newTestMutator()
-	runtimeClass := "sysbox-runc"
-	hostUsers := false
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{"sysbox/volume-init": `[{"name":"forged"}]`}},
-		Spec:       corev1.PodSpec{RuntimeClassName: &runtimeClass, HostUsers: &hostUsers, Containers: []corev1.Container{{Name: "app"}}},
-	}
-
-	mutated, err := mutator.Mutate(context.Background(), pod)
-
-	require.NoError(t, err)
-	_, found := mutated.Annotations["sysbox/volume-init"]
-	require.False(t, found)
-}
-
 func newTestMutator() *admission.Mutator {
 	return admission.NewMutator(admission.Config{SandboxImage: testSandboxImage})
 }
 
 func validRootfsPod() *corev1.Pod {
-	runtimeClass := "sysbox-runc"
+	runtimeClass := "sysrunc"
 	hostUsers := false
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -355,7 +289,7 @@ func validRootfsPod() *corev1.Pod {
 			Containers:       []corev1.Container{{Name: "c1"}, {Name: "c2"}},
 			Volumes: []corev1.Volume{{
 				Name:         "rootfs",
-				VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "sysbox-rootfs-pvc"}},
+				VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "sysrunc-rootfs-pvc"}},
 			}},
 		},
 	}

@@ -8,10 +8,10 @@ func TestIsPayloadMountpoint(t *testing.T) {
 		prefix string
 		want   bool
 	}{
-		{"/dev/.sysbox-procfs-123", ".sysbox-procfs-", true},
-		{"/dev/.sysbox-sysfs-123", ".sysbox-sysfs-", true},
-		{"/.sysbox-procfs-123", ".sysbox-procfs-", false},
-		{"/dev/not-sysbox", ".sysbox-procfs-", false},
+		{"/dev/.sysrunc-procfs-123", ".sysrunc-procfs-", true},
+		{"/dev/.sysrunc-sysfs-123", ".sysrunc-sysfs-", true},
+		{"/.sysrunc-procfs-123", ".sysrunc-procfs-", false},
+		{"/dev/not-sysbox", ".sysrunc-procfs-", false},
 	} {
 		if got := isPayloadMountpoint(test.path, test.prefix); got != test.want {
 			t.Errorf("isPayloadMountpoint(%q, %q) = %v, want %v", test.path, test.prefix, got, test.want)

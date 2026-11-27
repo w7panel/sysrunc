@@ -9,7 +9,7 @@ import (
 
 var (
 	ErrUnsafeLayerPath      = errors.New("unsafe rootfs rw-layer path")
-	ErrUnmanagedRootfsLayer = errors.New("rootfs rw-layer directory is not managed by sysbox")
+	ErrUnmanagedRootfsLayer = errors.New("rootfs rw-layer directory is not managed by sysrunc")
 )
 
 func safeLayerPath(path string) (string, error) {

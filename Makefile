@@ -18,12 +18,11 @@ ZPK_PROXY_URL ?= https://gh-proxy.org/$(ZPK_DOWNLOAD_URL)
 
 build:
 	mkdir -p $(BIN_DIR)
+	rm -f $(BIN_DIR)/sysbox-runc $(BIN_DIR)/sysbox-runc-lite
 	cd runc && go build -tags seccomp -ldflags '-linkmode external -extldflags -static' -o ../$(BIN_DIR)/sysrunc .
 	cd fs && go build -ldflags '-linkmode external -extldflags -static' -o ../$(BIN_DIR)/sysrunc-fs ./cmd/sysrunc-fs
 	cd admission && go build -o ../$(BIN_DIR)/sysrunc-admission ./cmd/sysrunc-admission
 	cd snapshotter && CGO_ENABLED=0 go build -o ../$(BIN_DIR)/sysrunc-snapshotter ./cmd/sysrunc-snapshotter
-	ln -sfn sysrunc $(BIN_DIR)/sysbox-runc
-	ln -sfn sysrunc $(BIN_DIR)/sysbox-runc-lite
 
 test:
 	cd ipc && go test ./...

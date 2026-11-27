@@ -22,9 +22,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/sirupsen/logrus"
 	"github.com/w7panel/sysrunc/fs/domain"
 	"github.com/w7panel/sysrunc/fs/fuse"
-	"github.com/sirupsen/logrus"
 )
 
 type umountSyscallInfo struct {
@@ -36,11 +36,11 @@ type umountSyscallInfo struct {
 func (u *umountSyscallInfo) process() (*sysResponse, error) {
 
 	// A procfs mount inside the container is a combination of a base procfs
-	// mount plus sysbox-fs submounts, and we want the procfs mount to act as
+	// mount plus sysrunc-fs submounts, and we want the procfs mount to act as
 	// one whole rather than a collection of mounts (i.e., just like a regular
 	// procfs mount on a host). Thus, unmounts that occur on the base procfs
 	// mount are accepted (we unmount the submounts first and then the base
-	// mount). On the other hand, unmounts that target only the sysbox-fs
+	// mount). On the other hand, unmounts that target only the sysrunc-fs
 	// submounts are ignored. The reason we ignore them as opposed to returning
 	// an error message is that we also ignore bind-to-self mounts on submounts
 	// (see handling of bind-to-self submounts in mount.go); thus, returning an
@@ -72,7 +72,7 @@ func (u *umountSyscallInfo) process() (*sysResponse, error) {
 	// Adjust umount target attribute attending to the process' root path.
 	u.targetAdjust()
 
-	if mip.IsSysboxfsBaseMount(u.Target) {
+	if mip.IsSysruncfsBaseMount(u.Target) {
 
 		// Special case: disallow unmounting of /proc; we must do this because we
 		// use /proc as the source of other procfs mounts within the container
@@ -92,9 +92,9 @@ func (u *umountSyscallInfo) process() (*sysResponse, error) {
 		}
 
 		// If under the base mount there are any submounts *not* managed by
-		// sysbox-fs, fail the unmount with EBUSY (such submounts must be
+		// sysrunc-fs, fail the unmount with EBUSY (such submounts must be
 		// explicitly unmounted prior to unmounting the base mount).
-		if mip.HasNonSysboxfsSubmount(u.Target) {
+		if mip.HasNonSysruncfsSubmount(u.Target) {
 			resp := u.tracer.createErrorResponse(u.reqId, syscall.EBUSY)
 			return resp, nil
 		}
@@ -104,8 +104,8 @@ func (u *umountSyscallInfo) process() (*sysResponse, error) {
 
 		switch info.FsType {
 		case "proc":
-			// Sysbox-fs emulates all new procfs mounts inside the container by
-			// mounting the kernel's procfs and the mounting sysbox-fs on
+			// Sysrunc-fs emulates all new procfs mounts inside the container by
+			// mounting the kernel's procfs and the mounting sysrunc-fs on
 			// portions of procfs (e.g., proc/sys, proc/uptime, etc.)
 			logrus.Debugf("Processing procfs unmount: %v", u)
 			return u.processUmount(mip)
@@ -119,8 +119,8 @@ func (u *umountSyscallInfo) process() (*sysResponse, error) {
 		// Not a mount we manage, have the kernel do the unmount.
 		return u.tracer.createContinueResponse(u.reqId), nil
 
-	} else if mip.IsSysboxfsSubmount(u.Target) {
-		logrus.Debugf("Rejected unmount of sysbox-fs managed submount at %s",
+	} else if mip.IsSysruncfsSubmount(u.Target) {
+		logrus.Debugf("Rejected unmount of sysrunc-fs managed submount at %s",
 			u.Target)
 		return u.tracer.createErrorResponse(u.reqId, syscall.EINVAL), nil
 	}
@@ -417,7 +417,7 @@ func (u *umountSyscallInfo) umountAllowed(
 	return true, nil
 }
 
-// Method handles umount syscall requests on sysbox-fs managed base mounts.
+// Method handles umount syscall requests on sysrunc-fs managed base mounts.
 func (u *umountSyscallInfo) processUmount(
 	mip domain.MountInfoParserIface) (*sysResponse, error) {
 
@@ -459,7 +459,7 @@ func (u *umountSyscallInfo) processUmount(
 	return u.tracer.createSuccessResponse(u.reqId), nil
 }
 
-// Build instructions payload required to unmount a sysbox-fs base mount (and
+// Build instructions payload required to unmount a sysrunc-fs base mount (and
 // any submounts under it)
 func (u *umountSyscallInfo) createUmountPayload(
 	mip domain.MountInfoParserIface) *[]*domain.UmountSyscallPayload {
@@ -468,8 +468,8 @@ func (u *umountSyscallInfo) createUmountPayload(
 
 	submounts := []string{}
 
-	if mip.IsSysboxfsBaseMount(u.Target) {
-		submounts = mip.GetSysboxfsSubMounts(u.Target)
+	if mip.IsSysruncfsBaseMount(u.Target) {
+		submounts = mip.GetSysruncfsSubMounts(u.Target)
 	} else {
 		submounts = append(submounts, u.Target)
 	}
@@ -486,7 +486,7 @@ func (u *umountSyscallInfo) createUmountPayload(
 		payload = append(payload, newelem)
 	}
 
-	if mip.IsSysboxfsBaseMount(u.Target) {
+	if mip.IsSysruncfsBaseMount(u.Target) {
 		payload = append(payload, u.UmountSyscallPayload)
 	}
 
@@ -496,7 +496,7 @@ func (u *umountSyscallInfo) createUmountPayload(
 // Method addresses scenarios where the process generating the umount syscall has
 // a 'root' attribute different than default one ("/"). This is typically the
 // case in chroot'ed environments. Method's goal is to make the required target
-// adjustments so that sysbox-fs can carry out the mount in the expected context.
+// adjustments so that sysrunc-fs can carry out the mount in the expected context.
 func (u *umountSyscallInfo) targetAdjust() {
 
 	root := u.syscallCtx.root

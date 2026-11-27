@@ -1998,3 +1998,19 @@ FS 或 L0 新运行时验收。
   定向终止 L1 FUSE worker 后，Supervisor 启动新 worker；FS Pod 仍可读取
   `/proc/meminfo` 和 `overcommit_memory`。该 Pod 只配置 `sysrunc.io/fs=true`，
   未配置 ticker 注解。
+
+## 2026-11-27 移除 Sysbox 名称及注解兼容
+
+- 测试镜像 `ccr.ccs.tencentyun.com/afan-public/w7panel-sysrunc:218-20261127-sysrunc-only`
+  digest `sha256:d0c8c226bee4dd57ed4efcdfa8990d299b35acc54beaa00a40ab193b298368f6`。
+  L1 Helm revision 55、L0 revision 21 均 deployed；内外层 installer、
+  admission 四个运行容器的 imageID 均为该 digest。
+- L0 更新重建专用 CKM Server 后，Server 2/2 Ready。仅重建两个
+  `restartPolicy: Never` 且处于 Unknown 的测试 Pod，PVC 保留；L2 FS、普通
+  nginx、rootfs 三个 Pod 均 Ready。FS Pod 的 `/proc/sys` 挂载来源为
+  `sysruncfs`，`/proc/sys/kernel/ostype`、`osrelease` 和 `/proc/meminfo`
+  可读；普通 nginx 的 PVC webroot 有 `index.html`、`50x.html`；rootfs
+  标记 `/root/rootfs-marker-1125` 仍为 `rootfs-1125-persist`。
+- 临时 Pod 仅配置旧 `sysbox/rootfs-rw-layer` 和 `sysbox/volume-init`
+  注解，admission 未注入 sidecar，Pod Ready；现有 `sysrunc.io/rootfs-rw-layer`
+  Pod 有 `sysrunc-rootfs` sidecar。临时 Pod 已删除。

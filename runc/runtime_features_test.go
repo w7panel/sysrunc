@@ -15,10 +15,8 @@ func TestFeaturesForSpec(t *testing.T) {
 		errContains      string
 	}{
 		{name: "new default", executable: "/usr/bin/sysrunc"},
-		{name: "legacy full default", executable: "/usr/bin/sysbox-runc", fs: true},
-		{name: "legacy lite default", executable: "/usr/bin/sysbox-runc-lite"},
+		{name: "retired executable does not enable fs", executable: "/usr/bin/sysbox-runc"},
 		{name: "explicit full", executable: "sysrunc", annotations: map[string]string{fsAnnotation: "true"}, fs: true},
-		{name: "explicit override", executable: "sysbox-runc", annotations: map[string]string{fsAnnotation: "false"}},
 		{name: "ticker", executable: "sysrunc", annotations: map[string]string{fsAnnotation: "true", tickerAnnotation: "true"}, fs: true, ticker: true},
 		{name: "ticker requires fs", executable: "sysrunc", annotations: map[string]string{tickerAnnotation: "true"}, errContains: "requires"},
 		{name: "invalid fs", executable: "sysrunc", annotations: map[string]string{fsAnnotation: "sometimes"}, errContains: fsAnnotation},

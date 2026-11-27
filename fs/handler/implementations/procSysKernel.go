@@ -160,7 +160,7 @@ import (
 //
 // Notice that this resource is perfectly reachable within a regular or system
 // container. That's to say that our main purpose here is not 'functional'; we
-// we are creating this handler to enhance sysbox-fs performance: every 'sudo'
+// we are creating this handler to enhance sysrunc-fs performance: every 'sudo'
 // instruction does two consecutive reads() over this resource -- and that
 // entails the execution of all the other file-operations too (i.e. lookup,
 // getattr, etc).

@@ -8,11 +8,8 @@ annotation `sysrunc.io/fs: "true"` to enable the FS registration, virtual
 `sysrunc.io/ticker: "true"` to enable the FS ticker for that container; ticker
 requires FS. Both annotations default to `false`.
 
-When invoked as `sysbox-runc`, the same binary defaults FS to `true`; when
-invoked as `sysbox-runc-lite`, it defaults FS to `false`. Explicit annotations
-override these compatibility defaults. The persistent rootfs annotation is
-`sysrunc.io/rootfs-rw-layer`; `sysbox/rootfs-rw-layer` remains accepted when the
-new annotation is absent.
+The persistent rootfs annotation is `sysrunc.io/rootfs-rw-layer`. The runtime
+uses only the `sysrunc` executable name.
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/opencontainers/runc)](https://goreportcard.com/report/github.com/opencontainers/runc)
 [![Go Reference](https://pkg.go.dev/badge/github.com/opencontainers/runc.svg)](https://pkg.go.dev/github.com/opencontainers/runc)

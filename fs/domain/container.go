@@ -68,8 +68,8 @@ type ContainerIface interface {
 	Unlock()
 }
 
-// ContainerStateService interface defines the APIs that sysbox-fs components
-// must utilize to interact with the sysbox-fs state-storage backend.
+// ContainerStateService interface defines the APIs that sysrunc-fs components
+// must utilize to interact with the sysrunc-fs state-storage backend.
 type ContainerStateServiceIface interface {
 	Setup(
 		fss FuseServerServiceIface,

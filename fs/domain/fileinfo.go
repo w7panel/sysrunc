@@ -27,9 +27,9 @@ const (
 	MaxGid = 0xFFFF
 )
 
-// FileInfo is sysbox-fs' implementation of os.FileInfo interface. A concrete
+// FileInfo is sysrunc-fs' implementation of os.FileInfo interface. A concrete
 // type is required during serialization operations when exchanging state between
-// sysbox-fs' main and its re-exec instances.
+// sysrunc-fs' main and its re-exec instances.
 type FileInfo struct {
 	Fname    string
 	Fsize    int64

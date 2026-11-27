@@ -60,7 +60,7 @@ func (m *mountSyscallInfo) process() (*sysResponse, error) {
 	}
 
 	// Handle requests that create a new mountpoint for filesystems managed by
-	// sysbox-fs.
+	// sysrunc-fs.
 	if mh.IsNewMount(m.Flags) {
 
 		mip, err := mts.NewMountInfoParser(m.cntr, m.processInfo, true, true, false)
@@ -85,13 +85,13 @@ func (m *mountSyscallInfo) process() (*sysResponse, error) {
 		return m.tracer.createContinueResponse(m.reqId), nil
 	}
 
-	// Handle propagation type changes on filesystems managed by sysbox-fs (no
+	// Handle propagation type changes on filesystems managed by sysrunc-fs (no
 	// action required; let the kernel handle mount propagation changes).
 	if mh.HasPropagationFlag(m.Flags) {
 		return m.tracer.createContinueResponse(m.reqId), nil
 	}
 
-	// Handle remount requests on filesystems managed by sysbox-fs
+	// Handle remount requests on filesystems managed by sysrunc-fs
 	if mh.IsRemount(m.Flags) {
 
 		mip, err := mts.NewMountInfoParser(m.cntr, m.processInfo, true, true, false)
@@ -103,16 +103,16 @@ func (m *mountSyscallInfo) process() (*sysResponse, error) {
 			return resp, nil
 		}
 
-		if mip.IsSysboxfsBaseMount(m.Target) ||
-			mip.IsSysboxfsSubmount(m.Target) {
+		if mip.IsSysruncfsBaseMount(m.Target) ||
+			mip.IsSysruncfsSubmount(m.Target) {
 			return m.processRemount(mip)
 		}
 
-		// No action by sysbox-fs
+		// No action by sysrunc-fs
 		return m.tracer.createContinueResponse(m.reqId), nil
 	}
 
-	// Handle bind-mount requests on filesystems managed by sysbox-fs.
+	// Handle bind-mount requests on filesystems managed by sysrunc-fs.
 	if mh.IsBind(m.Flags) {
 
 		mip, err := mts.NewMountInfoParser(m.cntr, m.processInfo, true, true, false)
@@ -120,34 +120,34 @@ func (m *mountSyscallInfo) process() (*sysResponse, error) {
 			return nil, err
 		}
 
-		// Ignore binds-to-self requests on sysbox-fs managed submounts (these
+		// Ignore binds-to-self requests on sysrunc-fs managed submounts (these
 		// are already bind-mounts, so we want to avoid the redundant bind mount
 		// for cosmetic purposes).
-		if m.Source == m.Target && mip.IsSysboxfsSubmount(m.Target) {
-			logrus.Debugf("Ignoring bind-to-self request of sysbox-fs managed submount at %s",
+		if m.Source == m.Target && mip.IsSysruncfsSubmount(m.Target) {
+			logrus.Debugf("Ignoring bind-to-self request of sysrunc-fs managed submount at %s",
 				m.Target)
 			return m.tracer.createSuccessResponse(m.reqId), nil
 		}
 
-		// Ignore /dev/null bind mounts on sysbox-fs managed submounts which are
+		// Ignore /dev/null bind mounts on sysrunc-fs managed submounts which are
 		// already bind-mounted to /dev/null (i.e., masked).
-		if m.Source == "/dev/null" && mip.IsSysboxfsMaskedSubmount(m.Target) {
-			logrus.Debugf("Ignoring /dev/null bind request over sysbox-fs masked submount at %s",
+		if m.Source == "/dev/null" && mip.IsSysruncfsMaskedSubmount(m.Target) {
+			logrus.Debugf("Ignoring /dev/null bind request over sysrunc-fs masked submount at %s",
 				m.Target)
 			return m.tracer.createSuccessResponse(m.reqId), nil
 		}
 
-		// Process bind-mounts whose source is a sysbox-fs base mount (as we
+		// Process bind-mounts whose source is a sysrunc-fs base mount (as we
 		// want the submounts to also be bind-mounted at the target).
-		if m.Source != m.Target && mip.IsSysboxfsBaseMount(m.Source) {
+		if m.Source != m.Target && mip.IsSysruncfsBaseMount(m.Source) {
 			return m.processBindMount(mip)
 		}
 
-		// No action by sysbox-fs
+		// No action by sysrunc-fs
 		return m.tracer.createContinueResponse(m.reqId), nil
 	}
 
-	// No action by sysbox-fs otherwise
+	// No action by sysrunc-fs otherwise
 	return m.tracer.createContinueResponse(m.reqId), nil
 }
 
@@ -245,7 +245,7 @@ func (m *mountSyscallInfo) createProcPayload(
 
 	mh := m.tracer.service.mts.MountHelper()
 
-	// Sysbox-fs "/proc" bind-mounts.
+	// Sysrunc-fs "/proc" bind-mounts.
 	procBindMounts := existingProcMounts(mh.ProcMounts(), func(path string) bool {
 		_, err := m.processInfo.PathAccess(path, 0, true)
 		return err == nil
@@ -416,7 +416,7 @@ func (m *mountSyscallInfo) createSysPayload(
 
 	mh := m.tracer.service.mts.MountHelper()
 
-	// Sysbox-fs "/sys" bind-mounts.
+	// Sysrunc-fs "/sys" bind-mounts.
 	sysBindMounts := mh.SysMounts()
 	for _, v := range sysBindMounts {
 		relPath := strings.TrimPrefix(v, "/sys")
@@ -536,7 +536,7 @@ func (m *mountSyscallInfo) createOverlayMountPayload(
 	return &payload
 }
 
-// Method handles "nfs", "cifs", and "smb3" mount syscall requests. Sysbox-fs does not manage nfs
+// Method handles "nfs", "cifs", and "smb3" mount syscall requests. Sysrunc-fs does not manage nfs
 // mounts per-se, but only "proxies" the nfs mount syscall. It does this in
 // order to enable nfs to be mounted from within a (non init) user-ns.
 func (m *mountSyscallInfo) processNfsMount(
@@ -612,7 +612,7 @@ func (m *mountSyscallInfo) remountAllowed(
 		return true, nil
 	}
 
-	// Skip instructions targeting file-systems explicitly handled by sysbox-fs.
+	// Skip instructions targeting file-systems explicitly handled by sysrunc-fs.
 	if m.FsType == "proc" || m.FsType == "sysfs" {
 		return true, nil
 	}
@@ -934,14 +934,14 @@ func (m *mountSyscallInfo) createRemountPayload(
 	mh := m.tracer.service.mts.MountHelper()
 
 	// A procfs mount inside a sys container is a combination of a base proc
-	// mount plus sysbox-fs submounts. If the remount is done on the base mount,
+	// mount plus sysrunc-fs submounts. If the remount is done on the base mount,
 	// its effect is also applied to the submounts. If the remount is on a
 	// submount, its effect is limited to that submount.
 
 	submounts := []string{}
 
-	if mip.IsSysboxfsBaseMount(m.Target) {
-		submounts = mip.GetSysboxfsSubMounts(m.Target)
+	if mip.IsSysruncfsBaseMount(m.Target) {
+		submounts = mip.GetSysruncfsSubMounts(m.Target)
 	} else {
 		submounts = append(submounts, m.Target)
 	}
@@ -958,8 +958,8 @@ func (m *mountSyscallInfo) createRemountPayload(
 
 		// The submounts must always be remounted with "MS_BIND" to ensure that
 		// only the submounts are affected. Otherwise, the remount effect
-		// applies at the sysbox-fs fuse level, causing weird behavior (e.g.,
-		// remounting /proc as read-only would cause all sysbox-fs managed
+		// applies at the sysrunc-fs fuse level, causing weird behavior (e.g.,
+		// remounting /proc as read-only would cause all sysrunc-fs managed
 		// submounts under /sys to become read-only too!).
 		submFlags |= unix.MS_BIND
 
@@ -975,7 +975,7 @@ func (m *mountSyscallInfo) createRemountPayload(
 		if m.Flags&unix.MS_RDONLY == unix.MS_RDONLY {
 			submFlags |= unix.MS_RDONLY
 		} else {
-			if !mip.IsSysboxfsRoSubmount(subm) {
+			if !mip.IsSysruncfsRoSubmount(subm) {
 				submFlags = submFlags &^ unix.MS_RDONLY
 			}
 		}
@@ -998,7 +998,7 @@ func (m *mountSyscallInfo) createRemountPayload(
 		payload = append(payload, newelem)
 	}
 
-	if mip.IsSysboxfsBaseMount(m.Target) {
+	if mip.IsSysruncfsBaseMount(m.Target) {
 		payload = append(payload, m.MountSyscallPayload)
 	}
 
@@ -1006,7 +1006,7 @@ func (m *mountSyscallInfo) createRemountPayload(
 }
 
 // Method handles bind-mount requests whose source is a mountpoint managed by
-// sysbox-fs.
+// sysrunc-fs.
 func (m *mountSyscallInfo) processBindMount(
 	mip domain.MountInfoParserIface) (*sysResponse, error) {
 
@@ -1059,7 +1059,7 @@ func (m *mountSyscallInfo) createBindMountPayload(
 	var payload []*domain.MountSyscallPayload
 
 	// A procfs mount inside a sys container is a combination of a base proc
-	// mount plus sysbox-fs submounts. If the bind-mount is done on the base
+	// mount plus sysrunc-fs submounts. If the bind-mount is done on the base
 	// mount, its effect is also applied to the submounts.
 
 	payload = append(payload, m.MountSyscallPayload)
@@ -1071,8 +1071,8 @@ func (m *mountSyscallInfo) createBindMountPayload(
 	}
 
 	// If the bind-mount is not recursive, then we do the bind-mount of the
-	// sysbox-fs managed submounts explicitly.
-	submounts := mip.GetSysboxfsSubMounts(m.Source)
+	// sysrunc-fs managed submounts explicitly.
+	submounts := mip.GetSysruncfsSubMounts(m.Source)
 
 	for _, subm := range submounts {
 		relTarget := strings.TrimPrefix(subm, m.Source)
@@ -1097,7 +1097,7 @@ func (m *mountSyscallInfo) createBindMountPayload(
 // Method addresses scenarios where the process generating the mount syscall has
 // a 'root' attribute different than default one ("/"). This is typically the
 // case in chroot'ed environments. Method's goal is to make the required target
-// adjustments so that sysbox-fs can carry out the mount in the expected context.
+// adjustments so that sysrunc-fs can carry out the mount in the expected context.
 func (m *mountSyscallInfo) targetAdjust() {
 
 	root := m.syscallCtx.root

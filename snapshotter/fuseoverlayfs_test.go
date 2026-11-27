@@ -16,7 +16,7 @@
    limitations under the License.
 */
 
-package sysboxsnapshotter
+package sysruncsnapshotter
 
 import (
 	"context"

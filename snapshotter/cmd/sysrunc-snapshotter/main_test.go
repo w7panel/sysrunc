@@ -7,7 +7,7 @@ import (
 )
 
 func TestParseArgsRequiresContainerdSocket(t *testing.T) {
-	_, _, _, ok := parseArgs([]string{"sysbox-snapshotter", "--socket", "/run/sock", "--root", "/root"})
+	_, _, _, ok := parseArgs([]string{"sysrunc-snapshotter", "--socket", "/run/sock", "--root", "/root"})
 	if ok {
 		t.Fatal("parseArgs accepted missing containerd socket")
 	}
@@ -15,7 +15,7 @@ func TestParseArgsRequiresContainerdSocket(t *testing.T) {
 
 func TestParseArgsReturnsContainerdSocket(t *testing.T) {
 	address, root, socket, ok := parseArgs([]string{
-		"sysbox-snapshotter",
+		"sysrunc-snapshotter",
 		"--socket", "/run/sock",
 		"--root", "/root",
 		"--containerd-socket", "/run/k3s/containerd/containerd.sock",

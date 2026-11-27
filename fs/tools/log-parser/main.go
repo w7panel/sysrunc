@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-// sysboxfs log parser
+// sysruncfs log parser
 
 package main
 

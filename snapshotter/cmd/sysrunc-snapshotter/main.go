@@ -27,7 +27,7 @@ import (
 	"github.com/containerd/containerd/v2/contrib/snapshotservice"
 	"github.com/containerd/log"
 	sddaemon "github.com/coreos/go-systemd/v22/daemon"
-	sysboxsnapshotter "github.com/w7panel/sysrunc/snapshotter"
+	sysruncsnapshotter "github.com/w7panel/sysrunc/snapshotter"
 	"github.com/w7panel/sysrunc/snapshotter/cmd/sysrunc-snapshotter/version"
 	"github.com/w7panel/sysrunc/snapshotter/rootfs"
 	"google.golang.org/grpc"
@@ -77,11 +77,11 @@ func serve(address, root, containerdSocket string) error {
 		return err
 	}
 	// Instantiate the snapshotter
-	if err := sysboxsnapshotter.Supported(root); err != nil {
+	if err := sysruncsnapshotter.Supported(root); err != nil {
 		return err
 	}
 	sidecarStore := rootfs.NewContainerdSidecarSpecStore(containerdSocket)
-	sn, err := sysboxsnapshotter.NewSnapshotter(root, sysboxsnapshotter.WithRootfsHooks(sysboxsnapshotter.RootfsHooks{
+	sn, err := sysruncsnapshotter.NewSnapshotter(root, sysruncsnapshotter.WithRootfsHooks(sysruncsnapshotter.RootfsHooks{
 		IdentityResolver: rootfs.NewContainerdIdentityResolver(containerdSocket),
 		MetadataResolver: rootfs.NewSidecarMetadataResolver(sidecarStore),
 		PVCResolver:      rootfs.NewPVCMountPathResolver(sidecarStore),

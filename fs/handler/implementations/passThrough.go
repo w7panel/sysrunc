@@ -42,7 +42,7 @@ import (
 // behalf of it. It enters the namespaces by dispatching an "nsenter agent"
 // process that enters the namespaces, performs the filesystem operation, and
 // returns the result.  Note that the nsenter agent does NOT enter the mount
-// namespace of the container process, to avoid a recursion of sysbox-fs mounts
+// namespace of the container process, to avoid a recursion of sysrunc-fs mounts
 // /proc/sys and /sys.
 //
 
@@ -636,7 +636,7 @@ func checkProcAndSysRemount(n domain.IOnodeIface) (bool, bool, uint32) {
 
 	// The nsenter agent will enter/join the namespaces of the container,
 	// including the mount ns. This way, the nsenter process no longer carries
-	// the sysbox-fs mounts as it enters the container.
+	// the sysrunc-fs mounts as it enters the container.
 	//
 	// However, when accessing files under /proc or /sys, the agent needs to
 	// remount these as otherwise they won't pick up the container's assigned
@@ -646,7 +646,7 @@ func checkProcAndSysRemount(n domain.IOnodeIface) (bool, bool, uint32) {
 	// procfs and sysfs, we direct the nsenter agent create a new mount namespace
 	// so as to not mess up mounts in the container (see cloneFlags below). The
 	// creation of this new mount ns occurs **after** the nsenter process has
-	// joined the container namespaces (see sysbox-runc/libcontainer/nsexec). Thus it's
+	// joined the container namespaces (see sysrunc/libcontainer/nsexec). Thus it's
 	// equivalent to a "setns" to join all container namespaces, immediately
 	// followed by an "unshare" of the mount namespace.
 

@@ -88,7 +88,7 @@ func reaper(signal chan bool, mu *sync.RWMutex) {
 		// Use TryLock instead of Lock to avoid blocking subsequent RLock
 		// callers. Go's sync.RWMutex implements writer-preference: a pending
 		// Lock() blocks all new RLock() calls. If an nsenter child triggers
-		// a FUSE request back to sysbox-fs, the FUSE handler needs RLock to
+		// a FUSE request back to sysrunc-fs, the FUSE handler needs RLock to
 		// start a new nsenter. A blocking Lock() here would prevent that
 		// RLock, causing a deadlock. TryLock avoids this by simply skipping
 		// the reap cycle when nsenters are active

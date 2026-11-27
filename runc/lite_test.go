@@ -9,24 +9,17 @@ import (
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
-func TestRootfsAnnotationMigration(t *testing.T) {
-	spec := &specs.Spec{Annotations: map[string]string{liteLegacyRootfsAnnotation: "[]"}}
+func TestRootfsAnnotation(t *testing.T) {
+	spec := &specs.Spec{Annotations: map[string]string{liteRootfsAnnotation: "broken"}}
 	if !liteRootfsEnabled(spec) {
-		t.Fatal("legacy rootfs annotation must enable runtime device setup")
-	}
-	if err := addLiteSpecialMounts(spec, "container"); err != nil {
-		t.Fatalf("legacy annotation: %v", err)
-	}
-	spec.Annotations[liteRootfsAnnotation] = "broken"
-	if !liteRootfsEnabled(spec) {
-		t.Fatal("new rootfs annotation must take precedence")
+		t.Fatal("rootfs annotation must enable runtime device setup")
 	}
 	if err := addLiteSpecialMounts(spec, "container"); err == nil || !strings.Contains(err.Error(), liteRootfsAnnotation) {
-		t.Fatalf("new annotation did not take precedence: %v", err)
+		t.Fatalf("invalid rootfs annotation: %v", err)
 	}
 	spec.Annotations[liteRootfsAnnotation] = "false"
 	if liteRootfsEnabled(spec) {
-		t.Fatal("disabled new annotation must override enabled legacy annotation")
+		t.Fatal("disabled rootfs annotation enabled runtime device setup")
 	}
 }
 

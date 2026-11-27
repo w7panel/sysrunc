@@ -154,13 +154,13 @@ func (css *containerStateService) ContainerPreRegister(id, netns string) error {
 	//
 	// This means that all containers sharing the same net-ns will share the
 	// state for resources in the container's procfs and sysfs emulated by
-	// sysbox-fs (e.g., in a K8s + Sysbox pod, all containers see the same
+	// sysrunc-fs (e.g., in a K8s + Sysbox pod, all containers see the same
 	// /proc/uptime).
 	//
 	// Note that sharing a net-ns implies sharing a user-ns, because the net-ns
 	// is "owned" by it's associated user-ns (see user_namespaces (7)).
 	//
-	// Design detail: when multiple containers share sysbox-fs emulation state,
+	// Design detail: when multiple containers share sysrunc-fs emulation state,
 	// even if the first container is destroyed, a reference to its container
 	// state object will be held by the fuse servers associated with the other
 	// containers sharing the fuse state. Therefore those will continue to
@@ -169,7 +169,7 @@ func (css *containerStateService) ContainerPreRegister(id, netns string) error {
 
 	if len(cntrSameNetns) > 1 {
 		stateCntr = cntrSameNetns[0]
-		logrus.Debugf("Container %s will share sysbox-fs state with %v",
+		logrus.Debugf("Container %s will share sysrunc-fs state with %v",
 			formatter.ContainerID{id}, cntrSameNetns)
 	}
 

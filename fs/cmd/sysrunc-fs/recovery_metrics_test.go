@@ -53,19 +53,19 @@ func TestRecoveryMetricsSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, line := range []string{
-		"sysbox_fs_recovery_attempts_total 3\n",
-		"sysbox_fs_recovery_successes_total 2\n",
-		"sysbox_fs_recovery_failures_total 1\n",
-		"sysbox_fs_recovery_fault_events_total 4\n",
-		"sysbox_fs_recovery_frequent_fault_processes_total 1\n",
-		"# TYPE sysbox_fs_recovery_duration_seconds histogram\n",
-		"sysbox_fs_recovery_duration_seconds_bucket{le=\"0.25\"} 2\n",
-		"sysbox_fs_recovery_duration_seconds_bucket{le=\"+Inf\"} 3\n",
-		"sysbox_fs_recovery_duration_seconds_sum 1.405000000\n",
-		"sysbox_fs_recovery_duration_seconds_count 3\n",
-		"sysbox_fs_fallback_scan_duration_seconds_sum 3.000000000\n",
-		"sysbox_fs_fallback_scan_duration_seconds_count 2\n",
-		"sysbox_fs_fallback_scan_candidates 7\n",
+		"sysrunc_fs_recovery_attempts_total 3\n",
+		"sysrunc_fs_recovery_successes_total 2\n",
+		"sysrunc_fs_recovery_failures_total 1\n",
+		"sysrunc_fs_recovery_fault_events_total 4\n",
+		"sysrunc_fs_recovery_frequent_fault_processes_total 1\n",
+		"# TYPE sysrunc_fs_recovery_duration_seconds histogram\n",
+		"sysrunc_fs_recovery_duration_seconds_bucket{le=\"0.25\"} 2\n",
+		"sysrunc_fs_recovery_duration_seconds_bucket{le=\"+Inf\"} 3\n",
+		"sysrunc_fs_recovery_duration_seconds_sum 1.405000000\n",
+		"sysrunc_fs_recovery_duration_seconds_count 3\n",
+		"sysrunc_fs_fallback_scan_duration_seconds_sum 3.000000000\n",
+		"sysrunc_fs_fallback_scan_duration_seconds_count 2\n",
+		"sysrunc_fs_fallback_scan_candidates 7\n",
 	} {
 		if !strings.Contains(string(body), line) {
 			t.Fatalf("missing %q in %q", line, body)
@@ -81,7 +81,7 @@ func TestRecoveryMetricsSocket(t *testing.T) {
 }
 
 func TestRecoveryMetricsTextfile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metrics", "sysbox-fs.prom")
+	path := filepath.Join(t.TempDir(), "metrics", "sysrunc-fs.prom")
 	r := &recoveryRunner{attempts: 1}
 	if err := r.writeMetricsTextfile(path); err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestRecoveryMetricsTextfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "sysbox_fs_recovery_attempts_total 2\n") {
+	if !strings.Contains(string(data), "sysrunc_fs_recovery_attempts_total 2\n") {
 		t.Fatalf("stale textfile: %s", data)
 	}
 }

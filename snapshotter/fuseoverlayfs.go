@@ -16,7 +16,7 @@
    limitations under the License.
 */
 
-package sysboxsnapshotter
+package sysruncsnapshotter
 
 import (
 	"context"
@@ -625,7 +625,7 @@ func (o *snapshotter) materializeActiveSnapshot(ctx context.Context, snapshotID 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	marker := filepath.Join(work, ".sysbox-materialized-rootfs")
+	marker := filepath.Join(work, ".sysrunc-materialized-rootfs")
 	if complete, err := materializedRootfsComplete(marker, upper); err != nil {
 		return err
 	} else if complete {
@@ -652,7 +652,7 @@ func (o *snapshotter) materializeActiveSnapshot(ctx context.Context, snapshotID 
 	}()
 	// Copy away from the mounted upper: existing PVC files alias the source,
 	// and cancellation must not leave a partially overwritten durable layer.
-	staged, err := os.MkdirTemp(work, ".sysbox-rootfs-")
+	staged, err := os.MkdirTemp(work, ".sysrunc-rootfs-")
 	if err != nil {
 		return err
 	}

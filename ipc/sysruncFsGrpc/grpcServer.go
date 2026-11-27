@@ -112,7 +112,6 @@ func (s *Server) Init() error {
 	// Initializing grpc server
 	grpcServer := s.server
 	pb.RegisterSysruncStateChannelServer(grpcServer, s)
-	pb.RegisterSysboxStateChannelServer(grpcServer, s)
 
 	// Register reflection service on gRPC server.
 	reflection.Register(grpcServer)

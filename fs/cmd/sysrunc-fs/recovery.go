@@ -245,7 +245,7 @@ func detachCrashedHostMounts(root string, saved *state.RestartState) error {
 			for _, expected := range container.Devices {
 				known = known || expected == device
 			}
-			if mount.FSType != "fuse" || mount.Source != "sysboxfs" || !known {
+			if mount.FSType != "fuse" || mount.Source != "sysruncfs" || !known {
 				return fmt.Errorf("refusing to detach unrecognized mount at %s", path)
 			}
 			if err := unix.Unmount(path, unix.MNT_DETACH); err != nil {
@@ -655,20 +655,20 @@ func (r *recoveryRunner) writeMetrics(w io.Writer) {
 		"recovery_attempts", "recovery_successes", "recovery_failures", "recovery_old_fd_events",
 		"recovery_unsupported", "recovery_fault_events", "recovery_frequent_fault_processes", "recovery_dropped_fault_events",
 	} {
-		fmt.Fprintf(w, "sysbox_fs_%s_total %d\n", name, values[i])
+		fmt.Fprintf(w, "sysrunc_fs_%s_total %d\n", name, values[i])
 	}
-	fmt.Fprintln(w, "# TYPE sysbox_fs_recovery_duration_seconds histogram")
+	fmt.Fprintln(w, "# TYPE sysrunc_fs_recovery_duration_seconds histogram")
 	for i, bound := range recoveryDurationBounds {
-		fmt.Fprintf(w, "sysbox_fs_recovery_duration_seconds_bucket{le=\"%g\"} %d\n", bound.Seconds(), durationBuckets[i])
+		fmt.Fprintf(w, "sysrunc_fs_recovery_duration_seconds_bucket{le=\"%g\"} %d\n", bound.Seconds(), durationBuckets[i])
 	}
-	fmt.Fprintf(w, "sysbox_fs_recovery_duration_seconds_bucket{le=\"+Inf\"} %d\n", durationCount)
-	fmt.Fprintf(w, "sysbox_fs_recovery_duration_seconds_sum %.9f\n", duration.Seconds())
-	fmt.Fprintf(w, "sysbox_fs_recovery_duration_seconds_count %d\n", durationCount)
-	fmt.Fprintln(w, "# TYPE sysbox_fs_fallback_scan_duration_seconds summary")
-	fmt.Fprintf(w, "sysbox_fs_fallback_scan_duration_seconds_sum %.9f\n", fallbackScanDuration.Seconds())
-	fmt.Fprintf(w, "sysbox_fs_fallback_scan_duration_seconds_count %d\n", fallbackScanCount)
-	fmt.Fprintln(w, "# TYPE sysbox_fs_fallback_scan_candidates gauge")
-	fmt.Fprintf(w, "sysbox_fs_fallback_scan_candidates %d\n", fallbackScanCandidates)
+	fmt.Fprintf(w, "sysrunc_fs_recovery_duration_seconds_bucket{le=\"+Inf\"} %d\n", durationCount)
+	fmt.Fprintf(w, "sysrunc_fs_recovery_duration_seconds_sum %.9f\n", duration.Seconds())
+	fmt.Fprintf(w, "sysrunc_fs_recovery_duration_seconds_count %d\n", durationCount)
+	fmt.Fprintln(w, "# TYPE sysrunc_fs_fallback_scan_duration_seconds summary")
+	fmt.Fprintf(w, "sysrunc_fs_fallback_scan_duration_seconds_sum %.9f\n", fallbackScanDuration.Seconds())
+	fmt.Fprintf(w, "sysrunc_fs_fallback_scan_duration_seconds_count %d\n", fallbackScanCount)
+	fmt.Fprintln(w, "# TYPE sysrunc_fs_fallback_scan_candidates gauge")
+	fmt.Fprintf(w, "sysrunc_fs_fallback_scan_candidates %d\n", fallbackScanCandidates)
 }
 
 func (r *recoveryRunner) writeMetricsTextfile(path string) error {
@@ -776,10 +776,10 @@ func runRecoverable(r *recoveryRunner, ipc domain.IpcServiceIface, fss *fuse.Fus
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGQUIT)
 	defer signal.Stop(signals)
-	if err := libutils.CreatePidFile("sysrunc-fs", sysboxFsPidFile); err != nil {
+	if err := libutils.CreatePidFile("sysrunc-fs", sysruncFsPidFile); err != nil {
 		return err
 	}
-	defer libutils.DestroyPidFile(sysboxFsPidFile)
+	defer libutils.DestroyPidFile(sysruncFsPidFile)
 	stopMetrics, err := r.serveMetrics(recoveryMetricsSocket)
 	if err != nil {
 		return err

@@ -45,7 +45,7 @@ import (
 	"github.com/w7panel/sysrunc/fs/process"
 )
 
-const oobMaxFds = 4 // Max fds that can be sent via SCM_RIGHTS from nsenter agent to sysbox-fs.
+const oobMaxFds = 4 // Max fds that can be sent via SCM_RIGHTS from nsenter agent to sysrunc-fs.
 
 // Keep this small bootstrap wire format in the FS package. Importing the
 // whole libcontainer package into the nsenter helper initializes its
@@ -117,11 +117,11 @@ func readNsenterPID(r io.Reader) (pid, error) {
 }
 
 // NSenterEvent struct serves as a transport abstraction (envelope) to carry
-// all the potential messages that can be exchanged between sysbox-fs master
+// all the potential messages that can be exchanged between sysrunc-fs master
 // instance and secondary (forked) ones (aka child nsenter processes). These
 // nsenter processes are dispatched to perform actions inside the container
 // namespaces (e.g,. open files, mounts, etc.) which cannot be executed by
-// sysbox-fs' main instance.
+// sysrunc-fs' main instance.
 //
 // Every bidirectional transaction is represented by an event structure
 // (nsenterEvent), which holds both 'request' and 'response' messages, as well
@@ -129,7 +129,7 @@ func readNsenterPID(r io.Reader) (pid, error) {
 // message exchanges.
 type NSenterEvent struct {
 
-	// Credentials for the process on whose behalf sysbox-fs is creating the nsenter event.
+	// Credentials for the process on whose behalf sysrunc-fs is creating the nsenter event.
 	Pid uint32 `json:"pid"`
 	Uid uint32 `json:"uid"`
 	Gid uint32 `json:"gid"`
@@ -152,7 +152,7 @@ type NSenterEvent struct {
 	// Asynchronous flag to tag events for which no response is expected.
 	Async bool
 
-	// IPC pipes among sysbox-fs parent / child processes.
+	// IPC pipes among sysrunc-fs parent / child processes.
 	parentPipe *os.File
 
 	// Zombie Reaper (for left-over nsenter child processes)
@@ -191,8 +191,8 @@ func (e *NSenterEvent) GetProcessID() uint32 {
 
 ///////////////////////////////////////////////////////////////////////////////
 //
-// nsenterEvent methods below execute within the context of sysbox-fs' main
-// instance, upon invocation of sysbox-fs' handler or seccomp-bpf logic.
+// nsenterEvent methods below execute within the context of sysrunc-fs' main
+// instance, upon invocation of sysrunc-fs' handler or seccomp-bpf logic.
 //
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -236,8 +236,8 @@ func (e *NSenterEvent) getRespFileDescriptors(pipe *os.File) ([]int, error) {
 	return fds, nil
 }
 
-// Called by sysbox-fs handler routines to parse the response generated
-// by sysbox-fs' grand-child processes.
+// Called by sysrunc-fs handler routines to parse the response generated
+// by sysrunc-fs' grand-child processes.
 func (e *NSenterEvent) processResponse(pipe *os.File) error {
 
 	// First, receive the file descriptor(s) via SCM_RIGHTS (if any)
@@ -593,7 +593,7 @@ func (e *NSenterEvent) processResponse(pipe *os.File) error {
 }
 
 // Auxiliary function to obtain the FS path associated to any given namespace.
-// These FS paths are utilized by sysbox-runc's nsexec logic to enter the
+// These FS paths are utilized by sysrunc's nsexec logic to enter the
 // desired namespaces.
 //
 // Expected format example: "mnt:/proc/<pid>/ns/mnt"
@@ -633,7 +633,7 @@ func (e *NSenterEvent) namespacePaths() ([]string, error) {
 	return paths, nil
 }
 
-// Sysbox-fs nsenter requests are generated through this method. Handlers seeking to
+// Sysrunc-fs nsenter requests are generated through this method. Handlers seeking to
 // access namespaced resources will call this method to dispatch an nsenter agent,
 // which will enter the container namespaces to perform the requested operations.
 func (e *NSenterEvent) SendRequest() error {
@@ -655,7 +655,7 @@ func (e *NSenterEvent) SendRequest() error {
 	// Create a socket pair
 	parentPipe, childPipe, err := utils.NewSockPair("nsenterPipe")
 	if err != nil {
-		return errors.New("Error creating sysbox-fs nsenter pipe")
+		return errors.New("Error creating sysrunc-fs nsenter pipe")
 	}
 	e.parentPipe = parentPipe
 	defer func() {
@@ -690,7 +690,7 @@ func (e *NSenterEvent) SendRequest() error {
 		Value: e.CloneFlags,
 	})
 
-	// Prepare exec.cmd in charge of running: "sysbox-fs nsenter".
+	// Prepare exec.cmd in charge of running: "sysrunc-fs nsenter".
 	cmd := &exec.Cmd{
 		Path:        "/proc/self/exe",
 		Args:        []string{os.Args[0], "nsenter"},
@@ -702,12 +702,12 @@ func (e *NSenterEvent) SendRequest() error {
 		Stderr:      os.Stderr,
 	}
 
-	// Launch sysbox-fs' first child process.
+	// Launch sysrunc-fs' first child process.
 	err = cmd.Start()
 	childPipe.Close()
 	if err != nil {
-		logrus.Errorf("Error launching sysbox-fs first child process: %s", err)
-		return errors.New("Error launching sysbox-fs first child process")
+		logrus.Errorf("Error launching sysrunc-fs first child process: %s", err)
+		return errors.New("Error launching sysrunc-fs first child process")
 	}
 
 	// Send the config to child process.
@@ -718,7 +718,7 @@ func (e *NSenterEvent) SendRequest() error {
 		}
 		return errors.New("Error copying payload to pipe")
 	}
-	// Receive sysbox-fs' first-child pid. This must happen before waiting on
+	// Receive sysrunc-fs' first-child pid. This must happen before waiting on
 	// the PARENT process, because the PARENT writes the pid to the pipe before
 	// exiting. Reading the pipe first avoids holding an RLock while blocked on
 	// Process.Wait() for a child whose exit may be delayed by fuse_flush.
@@ -744,7 +744,7 @@ func (e *NSenterEvent) SendRequest() error {
 	go cmd.Process.Wait()
 	go firstChildProcess.Wait()
 
-	// Sysbox-fs' third child (grand-child) process remains and will enter the
+	// Sysrunc-fs' third child (grand-child) process remains and will enter the
 	// go runtime. This is the nsenter agent process.
 	process, err := os.FindProcess(childPID.Pid)
 	if err != nil {
@@ -759,7 +759,7 @@ func (e *NSenterEvent) SendRequest() error {
 
 	// Send the pid, uid, and gid using SCM creds, so the nsenter process
 	// receives them properly and can use them as needed. The kernel translates
-	// the creds across namespaces (e.g., from sysbox-fs namespaces to nsenter
+	// the creds across namespaces (e.g., from sysrunc-fs namespaces to nsenter
 	// agent namespaces).
 	reqCred := &syscall.Ucred{
 		Pid: int32(e.Pid),
@@ -799,12 +799,12 @@ func (e *NSenterEvent) SendRequest() error {
 		return nil
 	}
 
-	// Wait for sysbox-fs' grand-child response and process it accordingly.
+	// Wait for sysrunc-fs' grand-child response and process it accordingly.
 	ierr := e.processResponse(e.parentPipe)
 
 	// Destroy the socket pair.
 	if err := unix.Shutdown(int(parentPipe.Fd()), unix.SHUT_WR); err != nil {
-		logrus.Warnf("Error shutting down sysbox-fs nsenter pipe: %s", err)
+		logrus.Warnf("Error shutting down sysrunc-fs nsenter pipe: %s", err)
 	}
 
 	if ierr != nil {
@@ -835,7 +835,7 @@ func (e *NSenterEvent) TerminateRequest() error {
 
 	// Destroy the socket pair.
 	if err := unix.Shutdown(int(e.parentPipe.Fd()), unix.SHUT_WR); err != nil {
-		logrus.Warnf("Error shutting down sysbox-fs nsenter pipe: %s", err)
+		logrus.Warnf("Error shutting down sysrunc-fs nsenter pipe: %s", err)
 	}
 
 	// Kill ongoing request.
@@ -852,7 +852,7 @@ func (e *NSenterEvent) TerminateRequest() error {
 ///////////////////////////////////////////////////////////////////////////////
 //
 // nsenterEvent methods below execute within the context of container
-// namespaces. In other words, they are invoked as part of "sysbox-fs nsenter"
+// namespaces. In other words, they are invoked as part of "sysrunc-fs nsenter"
 // execution.
 //
 ///////////////////////////////////////////////////////////////////////////////
@@ -1089,7 +1089,7 @@ func (e *NSenterEvent) processDirReadRequest() error {
 		return nil
 	}
 
-	// Create a FileInfo slice to return to sysbox-fs' main instance.
+	// Create a FileInfo slice to return to sysrunc-fs' main instance.
 	var dirContentList []domain.FileInfo
 
 	for _, entry := range dirContent {
@@ -1166,7 +1166,7 @@ func (e *NSenterEvent) processMountSyscallRequest() error {
 	// while accessing kernel's created overlayfs components.
 	if payload[0].FsType == "overlay" {
 
-		// Create a dummy 'process' struct to represent the 'sysbox-fs nsenter' process
+		// Create a dummy 'process' struct to represent the 'sysrunc-fs nsenter' process
 		// executing this logic.
 		pid := os.Getpid()
 		this := e.service.prs.ProcessCreate(uint32(pid), 0, 0)
@@ -1334,7 +1334,7 @@ func (e *NSenterEvent) processGetxattrSyscallRequest() error {
 	p := e.ReqMsg.Payload.(domain.GetxattrSyscallPayload)
 	val := make([]byte, p.Size)
 
-	// Create a 'process' struct to represent the 'sysbox-fs nsenter' process
+	// Create a 'process' struct to represent the 'sysrunc-fs nsenter' process
 	// executing this logic.
 	pid := os.Getpid()
 	this := e.service.prs.ProcessCreate(uint32(pid), 0, 0)
@@ -1418,7 +1418,7 @@ func (e *NSenterEvent) processListxattrSyscallRequest() error {
 	p := e.ReqMsg.Payload.(domain.ListxattrSyscallPayload)
 	val := make([]byte, p.Size)
 
-	// Create a 'process' struct to represent the 'sysbox-fs nsenter' process
+	// Create a 'process' struct to represent the 'sysrunc-fs nsenter' process
 	// executing this logic.
 	pid := os.Getpid()
 	this := e.service.prs.ProcessCreate(uint32(pid), 0, 0)
@@ -1517,7 +1517,7 @@ func (e *NSenterEvent) processMountInfoRequest() error {
 
 	pid := os.Getpid()
 
-	// Create a 'process' struct to represent the 'sysbox-fs nsenter' process
+	// Create a 'process' struct to represent the 'sysrunc-fs nsenter' process
 	// executing this logic.
 	process := e.service.prs.ProcessCreate(uint32(pid), 0, 0)
 
@@ -1536,7 +1536,7 @@ func (e *NSenterEvent) processMountInfoRequest() error {
 		return nil
 	}
 
-	// Create a MountInfo slice to return to sysbox-fs' main instance.
+	// Create a MountInfo slice to return to sysrunc-fs' main instance.
 	mountInfoData, err := mip.ExtractMountInfo()
 	if err != nil {
 		e.ResMsg = &domain.NSenterMessage{
@@ -1646,8 +1646,8 @@ func (e *NSenterEvent) processOpenat2SyscallRequest(pipe *os.File) (int, error) 
 
 	p := e.ReqMsg.Payload.(domain.Openat2SyscallPayload)
 
-	// If requested, verify that the target file resides on sysbox-fs
-	if p.CheckForSysboxfs {
+	// If requested, verify that the target file resides on sysrunc-fs
+	if p.CheckForSysruncfs {
 		var statfs unix.Statfs_t
 		if err := unix.Statfs(p.Path, &statfs); err != nil {
 			e.ResMsg = &domain.NSenterMessage{
@@ -1657,10 +1657,10 @@ func (e *NSenterEvent) processOpenat2SyscallRequest(pipe *os.File) (int, error) 
 			return -1, nil
 		}
 
-		if statfs.Type != unix.FUSE_SUPER_MAGIC { // sysbox-fs is a FUSE filesystem
+		if statfs.Type != unix.FUSE_SUPER_MAGIC { // sysrunc-fs is a FUSE filesystem
 			e.ResMsg = &domain.NSenterMessage{
 				Type:    domain.ErrorResponse,
-				Payload: &fuse.IOerror{RcvError: fmt.Errorf("file %s is not on sysbox-fs", p.Path)},
+				Payload: &fuse.IOerror{RcvError: fmt.Errorf("file %s is not on sysrunc-fs", p.Path)},
 			}
 			return -1, nil
 		}
@@ -1704,8 +1704,8 @@ func (e *NSenterEvent) processOpenat2SyscallRequest(pipe *os.File) (int, error) 
 	}
 
 	// note: the fd is not sent in the response; rather it's sent separately via SCM_RIGHTS so it
-	// can be transferred properly from the nsenter process to the parent sysbox-fs (i.e., the
-	// kernel will allocate an fd for sysbox-fs which will be a copy of the nsenter's fd).
+	// can be transferred properly from the nsenter process to the parent sysrunc-fs (i.e., the
+	// kernel will allocate an fd for sysrunc-fs which will be a copy of the nsenter's fd).
 	e.ResMsg = &domain.NSenterMessage{
 		Type:    domain.Openat2SyscallResponse,
 		Payload: nil,
@@ -1714,14 +1714,14 @@ func (e *NSenterEvent) processOpenat2SyscallRequest(pipe *os.File) (int, error) 
 	return fd, nil
 }
 
-// Method in charge of processing all requests generated by sysbox-fs' master
+// Method in charge of processing all requests generated by sysrunc-fs' master
 // instance.
 func (e *NSenterEvent) processRequest(pipe *os.File) error {
 
 	// Get the credentials (pid, uid, gid) of the process on whose behalf we are operating;
-	// store them in the NSenterEvent. These credentials are sent by sysbox-fs' main instance via
+	// store them in the NSenterEvent. These credentials are sent by sysrunc-fs' main instance via
 	// SCM creds, so they are translated properly by the kernel across namespaces (i.e., from
-	// the sysbox-fs namespaces to the nsenter process namespaces).
+	// the sysrunc-fs namespaces to the nsenter process namespaces).
 	if err := e.getProcCreds(pipe); err != nil {
 		return err
 	}
@@ -2107,7 +2107,7 @@ func Init() (err error) {
 
 	// Send any response file descriptors out-of-band via SCM_RIGHTS.
 	// Note: we must always do this, even if there are no fds to send; otherwise
-	// the receiver (sysbox-fs) will block waiting for an fd that never comes.
+	// the receiver (sysrunc-fs) will block waiting for an fd that never comes.
 	rights := syscall.UnixRights(event.fileDescr...)
 	err = syscall.Sendmsg(int(pipe.Fd()), nil, rights, nil, 0)
 	if err != nil && event.ResMsg == nil {

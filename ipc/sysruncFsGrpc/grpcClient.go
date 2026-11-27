@@ -20,15 +20,12 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/golang/protobuf/ptypes"
 	pb "github.com/w7panel/sysrunc/ipc/sysruncFsGrpc/protocol"
 	"github.com/w7panel/sysrunc/libs/formatter"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/sirupsen/logrus"
 )
@@ -75,16 +72,8 @@ func connect() (*grpc.ClientConn, error) {
 	return conn, nil
 }
 
-// A new runtime may briefly reach the previous FS daemon during an installer
-// rollout. Retry only when that daemon does not know the new service; an
-// Unimplemented response from a registered method must not execute twice.
 func invokeStateChannel(ctx context.Context, conn *grpc.ClientConn, method string, request, response interface{}) error {
-	err := conn.Invoke(ctx, "/protobuf.sysruncStateChannel/"+method, request, response)
-	if status.Code(err) != codes.Unimplemented ||
-		!strings.HasPrefix(status.Convert(err).Message(), "unknown service protobuf.sysruncStateChannel") {
-		return err
-	}
-	return conn.Invoke(ctx, "/protobuf.sysboxStateChannel/"+method, request, response)
+	return conn.Invoke(ctx, "/protobuf.sysruncStateChannel/"+method, request, response)
 }
 
 func containerDataToPbData(data *ContainerData) (*pb.ContainerData, error) {

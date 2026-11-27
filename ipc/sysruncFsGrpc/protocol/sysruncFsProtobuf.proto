@@ -4,7 +4,6 @@
 
 syntax = "proto3";
 
-// The protobuf package remains stable for existing Unix socket clients.
 option go_package = "./;sysruncFsProtobuf";
 
 import "google/protobuf/timestamp.proto";
@@ -18,25 +17,6 @@ service sysruncStateChannel {
     rpc ContainerPreRegistration (ContainerData) returns (Response) {}
     rpc ContainerRegistration (ContainerData) returns (Response) {}
     rpc ContainerUnregistration (ContainerData) returns (Response) {}
-    rpc ContainerUpdate (ContainerData) returns (Response) {}
-}
-
-// Legacy service retained while existing socket clients roll forward.
-service sysboxStateChannel {
-
-    // Queries sysrunc-fs for the FUSE mountpoint
-    rpc GetMountpoint(MountpointReq) returns (MountpointResp) {}
-
-    // Generates a container-preregistration message
-    rpc ContainerPreRegistration (ContainerData) returns (Response) {}
-
-    // Generates a container-registration message
-    rpc ContainerRegistration (ContainerData) returns (Response) {}
-
-    // Generates a container-unregistration message
-    rpc ContainerUnregistration (ContainerData) returns (Response) {}
-
-    // Generates a container-update message
     rpc ContainerUpdate (ContainerData) returns (Response) {}
 }
 

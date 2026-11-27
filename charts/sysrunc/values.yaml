@@ -6,7 +6,6 @@ installMode: auto
 
 runtimeClassName: sysrunc
 # Enable after the old chart relinquishes ownership of its RuntimeClasses.
-compatRuntimeClasses: false
 
 installer:
   enabled: true

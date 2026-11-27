@@ -11,8 +11,8 @@ import (
 	"os"
 	"time"
 
-	containerdUtils "github.com/w7panel/sysrunc/libs/containerdUtils"
 	"github.com/w7panel/sysrunc/admission/admission"
+	containerdUtils "github.com/w7panel/sysrunc/libs/containerdUtils"
 	admissionregistrationv1client "k8s.io/client-go/kubernetes/typed/admissionregistration/v1"
 	coordinationv1client "k8s.io/client-go/kubernetes/typed/coordination/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -93,7 +93,7 @@ func main() {
 	}); err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("starting sysbox admission on %s sandboxImage=%s", *addr, sandboxImage)
+	log.Printf("starting sysrunc admission on %s sandboxImage=%s", *addr, sandboxImage)
 	if *bootstrapWebhook {
 		ctx := context.Background()
 		lifecycleConfig := admission.LifecycleConfig{

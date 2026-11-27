@@ -30,7 +30,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Container type to represent all the container-state relevant to sysbox-fs.
+// Container type to represent all the container-state relevant to sysrunc-fs.
 type container struct {
 	recoveryDevices  []uint32
 	resourceIdentity domain.ResourceIdentity
@@ -354,7 +354,7 @@ func (c *container) InitializeMountInfo() error {
 	defer c.intLock.Unlock()
 
 	// A per-container mountInfoParser object will be created here to hold the
-	// mount-state created by sysbox-runc during container initialization.
+	// mount-state created by sysrunc during container initialization.
 	if c.mountInfoParser == nil {
 		mip, err := c.service.mts.NewMountInfoParser(c, c.initProc, true, true, true)
 		if err != nil {

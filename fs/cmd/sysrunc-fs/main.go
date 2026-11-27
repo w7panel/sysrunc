@@ -52,9 +52,9 @@ import (
 )
 
 const (
-	sysboxRunDir    string = "/run/sysrunc"
-	sysboxFsPidFile string = sysboxRunDir + "/sysfs.pid"
-	usage           string = `sysrunc-fs file-system
+	sysruncRunDir    string = "/run/sysrunc"
+	sysruncFsPidFile string = sysruncRunDir + "/sysfs.pid"
+	usage            string = `sysrunc-fs file-system
 
 sysrunc-fs is a daemon that emulates portions of the system container's
 file system (e.g., procfs, sysfs). It's purpose is to make the
@@ -67,12 +67,12 @@ proper isolation.
 var (
 	edition  string // Sysbox Edition: CE or EE.
 	version  string // extracted from VERSION file
-	commitId string // latest sysbox-fs' git commit-id
+	commitId string // latest sysrunc-fs' git commit-id
 	builtAt  string // build time
 	builtBy  string // build owner
 )
 
-// sysbox-fs exit handler goroutine.
+// sysrunc-fs exit handler goroutine.
 func exitHandler(
 	signalChan chan os.Signal,
 	fss domain.FuseServerServiceIface,
@@ -83,7 +83,7 @@ func exitHandler(
 
 	s := <-signalChan
 
-	logrus.Warnf("sysbox-fs caught signal: %s", s)
+	logrus.Warnf("sysrunc-fs caught signal: %s", s)
 
 	logrus.Info("Stopping (gracefully) ...")
 	systemd.SdNotify(false, systemd.SdNotifyStopping)
@@ -123,8 +123,8 @@ func exitHandler(
 	time.Sleep(2)
 
 	// Delete pid file.
-	if err := libutils.DestroyPidFile(sysboxFsPidFile); err != nil {
-		logrus.Warnf("failed to destroy sysbox-fs pid file: %v", err)
+	if err := libutils.DestroyPidFile(sysruncFsPidFile); err != nil {
+		logrus.Warnf("failed to destroy sysrunc-fs pid file: %v", err)
 	}
 
 	logrus.Info("Exiting ...")
@@ -151,7 +151,7 @@ func runProfiler(ctx *cli.Context) (interface{ Stop() }, error) {
 
 	// Notice that 'NoShutdownHook' option is passed to profiler constructor to
 	// avoid this one reacting to 'sigterm' signal arrival. IOW, we want
-	// sysbox-fs signal handler to be the one stopping all profiling tasks.
+	// sysrunc-fs signal handler to be the one stopping all profiling tasks.
 
 	if cpuProfOn {
 		prof = profile.Start(
@@ -173,13 +173,13 @@ func runProfiler(ctx *cli.Context) (interface{ Stop() }, error) {
 }
 
 func setupRunDir() error {
-	if err := os.MkdirAll(sysboxRunDir, 0700); err != nil {
-		return fmt.Errorf("failed to create %s: %s", sysboxRunDir, err)
+	if err := os.MkdirAll(sysruncRunDir, 0700); err != nil {
+		return fmt.Errorf("failed to create %s: %s", sysruncRunDir, err)
 	}
 	return nil
 }
 
-// sysbox-fs main function
+// sysrunc-fs main function
 func main() {
 	if len(os.Args) == 3 && os.Args[1] == "--fd-broker" {
 		broker, err := seccomp.NewFDBroker(os.Args[2])
@@ -292,7 +292,7 @@ func main() {
 			Name:  "nsenter",
 			Usage: "Execute action within container namespaces",
 			Action: func(c *cli.Context) error {
-				// nsenter errors are passed back to sysbox-fs via a pipe
+				// nsenter errors are passed back to sysrunc-fs via a pipe
 				nsenter.Init()
 				return nil
 			},
@@ -343,7 +343,7 @@ func main() {
 			switch logLevel {
 			case "debug":
 				// Following instruction is to have Bazil's fuze-lib logs being
-				// included into sysbox-fs' log stream.
+				// included into sysrunc-fs' log stream.
 				flag.Set("fuse.debug", "true")
 				logrus.SetLevel(logrus.DebugLevel)
 			case "info":
@@ -368,7 +368,7 @@ func main() {
 		return nil
 	}
 
-	// sysbox-fs main-loop execution.
+	// sysrunc-fs main-loop execution.
 	app.Action = func(ctx *cli.Context) error {
 		if err := implementations.ConfigureResourceCacheTTL(ctx.GlobalDuration("resource-cache-ttl"), ctx.GlobalIsSet("resource-cache-ttl")); err != nil {
 			return err
@@ -382,7 +382,7 @@ func main() {
 			logrus.Infof("Commit-ID: %s", commitId)
 		}
 
-		err := libutils.CheckPidFile("sysrunc-fs", sysboxFsPidFile)
+		err := libutils.CheckPidFile("sysrunc-fs", sysruncFsPidFile)
 		if err != nil {
 			return err
 		}
@@ -403,7 +403,7 @@ func main() {
 		}
 		logrus.Infof("FUSE dir = %s", ctx.GlobalString("mountpoint"))
 
-		// Construct sysbox-fs services.
+		// Construct sysrunc-fs services.
 		var nsenterService = nsenter.NewNSenterService()
 		var ioService = sysio.NewIOService(domain.IOOsFileService)
 		var processService = process.NewProcessService()
@@ -419,13 +419,13 @@ func main() {
 			}
 		}
 
-		// Create the sysbox run dir
+		// Create the sysrunc run dir
 		err = setupRunDir()
 		if err != nil {
-			return fmt.Errorf("failed to setup the sysbox run dir: %v", err)
+			return fmt.Errorf("failed to setup the sysrunc run dir: %v", err)
 		}
 
-		// Setup sysbox-fs services.
+		// Setup sysrunc-fs services.
 		processService.Setup(ioService)
 
 		nsenterService.Setup(processService, nil)
@@ -556,7 +556,7 @@ func main() {
 			return runRecoverable(recoveryState, ipcService, fuseServerService, syscallMonitorService.Quiesce, profile)
 		}
 
-		// Launch exit handler (performs proper cleanup of sysbox-fs upon
+		// Launch exit handler (performs proper cleanup of sysrunc-fs upon
 		// receiving termination signals).
 		var exitChan = make(chan os.Signal, 1)
 		signal.Notify(
@@ -573,8 +573,8 @@ func main() {
 
 		systemd.SdNotify(false, systemd.SdNotifyReady)
 
-		// Create sysbox-fs pid file.
-		err = libutils.CreatePidFile("sysrunc-fs", sysboxFsPidFile)
+		// Create sysrunc-fs pid file.
+		err = libutils.CreatePidFile("sysrunc-fs", sysruncFsPidFile)
 		if err != nil {
 			return fmt.Errorf("failed to create sysfs.pid file: %s", err)
 		}
@@ -582,12 +582,12 @@ func main() {
 		logrus.Info("Ready ...")
 
 		if err := ipcService.Init(); err != nil {
-			logrus.Errorf("failed to start sysbox-fs: %v", err)
+			logrus.Errorf("failed to start sysrunc-fs: %v", err)
 		}
 
 		// Exited main event-loop. Delete pid file.
-		if err := libutils.DestroyPidFile(sysboxFsPidFile); err != nil {
-			logrus.Warnf("failed to destroy sysbox-fs pid file: %v", err)
+		if err := libutils.DestroyPidFile(sysruncFsPidFile); err != nil {
+			logrus.Warnf("failed to destroy sysrunc-fs pid file: %v", err)
 		}
 		logrus.Info("Done.")
 

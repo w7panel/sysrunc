@@ -26,8 +26,8 @@ spec:
             - /bin/sh
             - -ec
             - |
-              if kubectl get pods -A -o json | jq -e '[.items[] | select((.spec.runtimeClassName == "sysrunc" or .spec.runtimeClassName == "sysbox-runc-lite") and .status.phase != "Succeeded" and .status.phase != "Failed")] | length > 0' >/dev/null; then
-                echo 'remove sysrunc and compatible sysbox-runc-lite Pods before uninstalling the nested runtime' >&2
+              if kubectl get pods -A -o json | jq -e '[.items[] | select(.spec.runtimeClassName == "sysrunc" and .status.phase != "Succeeded" and .status.phase != "Failed")] | length > 0' >/dev/null; then
+                echo 'remove sysrunc Pods before uninstalling the nested runtime' >&2
                 exit 1
               fi
               kubectl -n {{ include "sysrunc.namespace" . }} delete daemonset {{ include "sysrunc.daemonSetName" . }} {{ include "sysrunc.fullname" . }}-inner-agent --ignore-not-found --wait=true

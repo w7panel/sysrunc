@@ -22,7 +22,7 @@ import (
 	"github.com/w7panel/sysrunc/fs/domain"
 )
 
-// List of sysbox-fs mountpoints within a sysbox container's procfs and sysfs.
+// List of sysrunc-fs mountpoints within a sysbox container's procfs and sysfs.
 //
 // These mountpoints need to be tracked here to ensure that they are handled
 // with special care. That is:
@@ -30,10 +30,10 @@ import (
 // * These mountpoints must be exposed in new procfs / sysfs file-systems
 //   created within a sys container (e.g. chroot jails, l2 containers, etc).
 //
-// * During the sys container initialization process, sysbox-fs must avoid
+// * During the sys container initialization process, sysrunc-fs must avoid
 //   generating a request to obtain the inodes associated to these mountpoints
 //   -- see extractAllInodes(). The goal here is to prevent recursive i/o
-//   operations from being able to arrive to sysbox-fs which could potentially
+//   operations from being able to arrive to sysrunc-fs which could potentially
 //   stall its FSM.
 
 var ProcfsMounts = []string{
@@ -59,12 +59,12 @@ var SysfsMounts = []string{
 	"/sys/module/nf_conntrack/parameters",
 }
 
-// IsSysboxfsMount checks if the given path is at or under a sysbox-fs mount.
+// IsSysruncfsMount checks if the given path is at or under a sysrunc-fs mount.
 //
 // Note: this is just a simple string prefix check. A check for actual mountpoints
 // is done by the nsenter agent when handling openat2 requests (since it must be
 // done inside the container's mount ns).
-func IsSysboxfsMount(path string) bool {
+func IsSysruncfsMount(path string) bool {
 	for _, mountPath := range ProcfsMounts {
 		if strings.HasPrefix(path, mountPath) &&
 			(len(path) == len(mountPath) || len(path) > len(mountPath) && path[len(mountPath)] == '/') {

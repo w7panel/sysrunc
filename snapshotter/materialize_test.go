@@ -1,6 +1,6 @@
 //go:build linux
 
-package sysboxsnapshotter
+package sysruncsnapshotter
 
 import (
 	"context"
@@ -46,7 +46,7 @@ func TestCopyRootfsPreservesImageMetadata(t *testing.T) {
 	if err := os.Symlink("file", filepath.Join(src, "symlink")); err != nil {
 		t.Fatal(err)
 	}
-	if err := unix.Setxattr(file, "user.sysbox-test", []byte("value"), 0); err != nil {
+	if err := unix.Setxattr(file, "user.sysrunc-test", []byte("value"), 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := copyRootfs(context.Background(), dst, src); err != nil {
@@ -70,7 +70,7 @@ func TestCopyRootfsPreservesImageMetadata(t *testing.T) {
 		t.Fatalf("symlink %q: %v", link, err)
 	}
 	value := make([]byte, 32)
-	n, err := unix.Getxattr(filepath.Join(dst, "file"), "user.sysbox-test", value)
+	n, err := unix.Getxattr(filepath.Join(dst, "file"), "user.sysrunc-test", value)
 	if err != nil || string(value[:n]) != "value" {
 		t.Fatalf("xattr lost: %v", err)
 	}

@@ -12,10 +12,10 @@ import (
 )
 
 var (
-	ErrSidecarSpecUnavailable = errors.New("sysbox sidecar oci spec unavailable")
-	ErrSidecarSpecAmbiguous   = errors.New("sysbox sidecar oci spec ambiguous")
-	ErrSidecarSpecMalformed   = errors.New("sysbox sidecar oci spec malformed")
-	ErrPVCMountNotFound       = errors.New("sysbox sidecar pvc mount not found")
+	ErrSidecarSpecUnavailable = errors.New("sysrunc sidecar oci spec unavailable")
+	ErrSidecarSpecAmbiguous   = errors.New("sysrunc sidecar oci spec ambiguous")
+	ErrSidecarSpecMalformed   = errors.New("sysrunc sidecar oci spec malformed")
+	ErrPVCMountNotFound       = errors.New("sysrunc sidecar pvc mount not found")
 )
 
 type SidecarSpecStore interface {
@@ -83,11 +83,11 @@ func stablePVCMountPathFromMountInfo(source string, readMountInfo func() ([]byte
 			continue
 		}
 		root := filepath.Clean(unescapeMountInfoPath(fields[3]))
-		const sysboxSpecialRoot = "/rootfs/special"
-		if root == sysboxSpecialRoot || !strings.HasPrefix(root, sysboxSpecialRoot+"/") {
+		const sysruncSpecialRoot = "/rootfs/special"
+		if root == sysruncSpecialRoot || !strings.HasPrefix(root, sysruncSpecialRoot+"/") {
 			return source, nil
 		}
-		return strings.TrimPrefix(root, sysboxSpecialRoot), nil
+		return strings.TrimPrefix(root, sysruncSpecialRoot), nil
 	}
 	return source, nil
 }

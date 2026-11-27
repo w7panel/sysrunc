@@ -148,7 +148,7 @@ func runIDMapMountCheckOnHost(dir string, checkOnOverlayfs bool) (bool, error) {
 		lowerDir, upperDir, workDir, idMapDir string
 	)
 
-	tmpDir, err := os.MkdirTemp(dir, "sysbox-ovfs-check")
+	tmpDir, err := os.MkdirTemp(dir, "sysrunc-ovfs-check")
 	if err != nil {
 		return false, err
 	}

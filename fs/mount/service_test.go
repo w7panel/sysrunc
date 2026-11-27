@@ -18,7 +18,7 @@ package mount
 
 import "testing"
 
-func TestIsSysboxfsMount(t *testing.T) {
+func TestIsSysruncfsMount(t *testing.T) {
 	tests := []struct {
 		path string
 		want bool
@@ -31,8 +31,8 @@ func TestIsSysboxfsMount(t *testing.T) {
 		{"/etc/hosts", false},
 	}
 	for _, test := range tests {
-		if got := IsSysboxfsMount(test.path); got != test.want {
-			t.Errorf("IsSysboxfsMount(%q) = %t, want %t", test.path, got, test.want)
+		if got := IsSysruncfsMount(test.path); got != test.want {
+			t.Errorf("IsSysruncfsMount(%q) = %t, want %t", test.path, got, test.want)
 		}
 	}
 }

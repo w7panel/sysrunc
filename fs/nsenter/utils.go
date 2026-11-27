@@ -41,7 +41,7 @@ type payloadMountsInfo struct {
 	cleanup          func(string, string)
 }
 
-// This function runs when the sysbox-fs nsenter helper process requests to
+// This function runs when the sysrunc-fs nsenter helper process requests to
 // mount procfs or sysfs.
 //
 // This function assumes the nsenter agent is running in an unshared mount
@@ -50,7 +50,7 @@ type payloadMountsInfo struct {
 // process mounts, which is not what we want).
 //
 // Note also that the nsenter process mounts the "real" procfs and sysfs, not
-// the sysbox-fs emulated one we use for containers, but does so from within the
+// the sysrunc-fs emulated one we use for containers, but does so from within the
 // container's namespaces (except it's own mount-ns as described above). This
 // way the nsenter agent can access host info for the container that may not be
 // available to the container itself. This info can then be used to emulate
@@ -76,17 +76,17 @@ func processPayloadMounts(mountSysfs, mountProcfs bool) (*payloadMountsInfo, err
 	// /proc, turns out it's not possible to mount sysfs on top of the
 	// container's /sys (the kernel returns a "resource busy" error). Thus, we
 	// mount sysfs on a temporary ephemeral dir inside the container's /dev
-	// tmpfs, at /dev/.sysbox-sysfs-<random-id>. Note that while that directory
+	// tmpfs, at /dev/.sysrunc-sysfs-<random-id>. Note that while that directory
 	// is visible
 	// inside the container (for a very brief period of time while the nsenter
 	// agent does its thing), the container can't see the sysfs mount on that dir
 	// (only the nsenter process can see the mount because it operates in a
 	// dedicated mount-ns). The container processes will never see the mount, and
-	// therefore the /.sysbox-sysfs-<random-id> dir will always look empty to
+	// therefore the /.sysrunc-sysfs-<random-id> dir will always look empty to
 	// container processes.
 	if mountSysfs {
 
-		sysfsMountpoint, err = createPayloadMountpoint(".sysbox-sysfs-")
+		sysfsMountpoint, err = createPayloadMountpoint(".sysrunc-sysfs-")
 		if errors.Is(err, unix.EROFS) {
 			// @ctalledo: hack: if the container has a read-only filesystem, then
 			// we can't create the temporary sysfs mount dir on it. In this case we
@@ -108,14 +108,14 @@ func processPayloadMounts(mountSysfs, mountProcfs bool) (*payloadMountsInfo, err
 	cleanupSysfs := func(mountpoint string) {
 		if mountpoint != "" {
 			unix.Unmount(mountpoint, unix.MNT_DETACH)
-			if isPayloadMountpoint(mountpoint, ".sysbox-sysfs-") {
+			if isPayloadMountpoint(mountpoint, ".sysrunc-sysfs-") {
 				os.RemoveAll(mountpoint)
 			}
 		}
 	}
 
 	if mountProcfs {
-		procfsMountpoint, err = createPayloadMountpoint(".sysbox-procfs-")
+		procfsMountpoint, err = createPayloadMountpoint(".sysrunc-procfs-")
 		if errors.Is(err, unix.EROFS) {
 			// @ctalledo: hack: if the container has a read-only filesystem, then
 			// we can't create the temporary procfs mount dir on it. In this case we
@@ -137,7 +137,7 @@ func processPayloadMounts(mountSysfs, mountProcfs bool) (*payloadMountsInfo, err
 	cleanupProcfs := func(mountpoint string) {
 		if mountpoint != "" {
 			unix.Unmount(mountpoint, unix.MNT_DETACH)
-			if isPayloadMountpoint(mountpoint, ".sysbox-procfs-") {
+			if isPayloadMountpoint(mountpoint, ".sysrunc-procfs-") {
 				os.RemoveAll(mountpoint)
 			}
 		}

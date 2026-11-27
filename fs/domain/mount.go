@@ -42,13 +42,13 @@ type MountInfoParserIface interface {
 	GetParentMount(info *MountInfo) *MountInfo
 	LookupByMountID(id int) *MountInfo
 	LookupByMountpoint(mp string) *MountInfo
-	IsSysboxfsBaseMount(mountpoint string) bool
-	IsSysboxfsBaseRoMount(mountpoint string) bool
-	IsSysboxfsSubmount(mountpoint string) bool
-	IsSysboxfsRoSubmount(mountpoint string) bool
-	IsSysboxfsMaskedSubmount(mountpoint string) bool
-	GetSysboxfsSubMounts(basemount string) []string
-	HasNonSysboxfsSubmount(basemount string) bool
+	IsSysruncfsBaseMount(mountpoint string) bool
+	IsSysruncfsBaseRoMount(mountpoint string) bool
+	IsSysruncfsSubmount(mountpoint string) bool
+	IsSysruncfsRoSubmount(mountpoint string) bool
+	IsSysruncfsMaskedSubmount(mountpoint string) bool
+	GetSysruncfsSubMounts(basemount string) []string
+	HasNonSysruncfsSubmount(basemount string) bool
 	IsRecursiveBindMount(info *MountInfo) bool
 	IsSelfMount(info *MountInfo) bool
 	IsOverlapMount(info *MountInfo) bool
@@ -135,7 +135,7 @@ type MountInfo struct {
 	Mip MountInfoParserIface `json:"-"`
 }
 
-// Mount structure utilized to exchange mount-state across sysbox-fs components.
+// Mount structure utilized to exchange mount-state across sysrunc-fs components.
 type Mount struct {
 	Source string `json:"source"`
 	Target string `json:"target"`

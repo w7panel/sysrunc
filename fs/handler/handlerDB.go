@@ -32,7 +32,7 @@ import (
 	"github.com/w7panel/sysrunc/libs/linuxUtils"
 )
 
-// Slice of sysbox-fs' default handlers and the respective paths where they
+// Slice of sysrunc-fs' default handlers and the respective paths where they
 // apply. Notice that the path associated to the pass-through handler is
 // symbolic as this one can be invoked from within any of the other handlers,
 // regardless of the FS location where they operate.
@@ -143,7 +143,7 @@ func (hs *handlerService) Setup(
 	// Set pointer to passthrough handler.
 	hs.passThroughHandler = implementations.PassThrough_Handler
 
-	// Obtain user-ns inode corresponding to sysbox-fs.
+	// Obtain user-ns inode corresponding to sysrunc-fs.
 	hostUserNsInode, err := hs.FindUserNsInode(uint32(os.Getpid()))
 	if err != nil {
 		logrus.Fatalf("Invalid init user-namespace found")
@@ -285,7 +285,7 @@ func (hs *handlerService) HandlersResourcesList() []string {
 	var resourcesList []string
 
 	// Technically not needed as this method is only expected to be called
-	// during sysbox-fs initialization (handlers are not in service at that
+	// during sysrunc-fs initialization (handlers are not in service at that
 	// point), but just in case utilization changes overtime.
 	hs.RLock()
 	defer hs.RUnlock()

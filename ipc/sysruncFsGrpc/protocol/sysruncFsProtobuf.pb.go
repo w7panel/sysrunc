@@ -389,33 +389,9 @@ var file_sysruncFsProtobuf_proto_rawDesc = []byte{
 	0x6e, 0x65, 0x72, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x12, 0x17, 0x2e, 0x70, 0x72, 0x6f, 0x74,
 	0x6f, 0x62, 0x75, 0x66, 0x2e, 0x43, 0x6f, 0x6e, 0x74, 0x61, 0x69, 0x6e, 0x65, 0x72, 0x44, 0x61,
 	0x74, 0x61, 0x1a, 0x12, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x52, 0x65,
-	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x32, 0xf9, 0x02, 0x0a, 0x12, 0x73, 0x79, 0x73,
-	0x62, 0x6f, 0x78, 0x53, 0x74, 0x61, 0x74, 0x65, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x12,
-	0x44, 0x0a, 0x0d, 0x47, 0x65, 0x74, 0x4d, 0x6f, 0x75, 0x6e, 0x74, 0x70, 0x6f, 0x69, 0x6e, 0x74,
-	0x12, 0x17, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x4d, 0x6f, 0x75, 0x6e,
-	0x74, 0x70, 0x6f, 0x69, 0x6e, 0x74, 0x52, 0x65, 0x71, 0x1a, 0x18, 0x2e, 0x70, 0x72, 0x6f, 0x74,
-	0x6f, 0x62, 0x75, 0x66, 0x2e, 0x4d, 0x6f, 0x75, 0x6e, 0x74, 0x70, 0x6f, 0x69, 0x6e, 0x74, 0x52,
-	0x65, 0x73, 0x70, 0x22, 0x00, 0x12, 0x49, 0x0a, 0x18, 0x43, 0x6f, 0x6e, 0x74, 0x61, 0x69, 0x6e,
-	0x65, 0x72, 0x50, 0x72, 0x65, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x72, 0x61, 0x74, 0x69, 0x6f,
-	0x6e, 0x12, 0x17, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x43, 0x6f, 0x6e,
-	0x74, 0x61, 0x69, 0x6e, 0x65, 0x72, 0x44, 0x61, 0x74, 0x61, 0x1a, 0x12, 0x2e, 0x70, 0x72, 0x6f,
-	0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00,
-	0x12, 0x46, 0x0a, 0x15, 0x43, 0x6f, 0x6e, 0x74, 0x61, 0x69, 0x6e, 0x65, 0x72, 0x52, 0x65, 0x67,
-	0x69, 0x73, 0x74, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x17, 0x2e, 0x70, 0x72, 0x6f, 0x74,
-	0x6f, 0x62, 0x75, 0x66, 0x2e, 0x43, 0x6f, 0x6e, 0x74, 0x61, 0x69, 0x6e, 0x65, 0x72, 0x44, 0x61,
-	0x74, 0x61, 0x1a, 0x12, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x52, 0x65,
-	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x48, 0x0a, 0x17, 0x43, 0x6f, 0x6e, 0x74,
-	0x61, 0x69, 0x6e, 0x65, 0x72, 0x55, 0x6e, 0x72, 0x65, 0x67, 0x69, 0x73, 0x74, 0x72, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x12, 0x17, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x43,
-	0x6f, 0x6e, 0x74, 0x61, 0x69, 0x6e, 0x65, 0x72, 0x44, 0x61, 0x74, 0x61, 0x1a, 0x12, 0x2e, 0x70,
-	0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x22, 0x00, 0x12, 0x40, 0x0a, 0x0f, 0x43, 0x6f, 0x6e, 0x74, 0x61, 0x69, 0x6e, 0x65, 0x72, 0x55,
-	0x70, 0x64, 0x61, 0x74, 0x65, 0x12, 0x17, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66,
-	0x2e, 0x43, 0x6f, 0x6e, 0x74, 0x61, 0x69, 0x6e, 0x65, 0x72, 0x44, 0x61, 0x74, 0x61, 0x1a, 0x12,
-	0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
-	0x73, 0x65, 0x22, 0x00, 0x42, 0x16, 0x5a, 0x14, 0x2e, 0x2f, 0x3b, 0x73, 0x79, 0x73, 0x72, 0x75,
-	0x6e, 0x63, 0x46, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x62, 0x06, 0x70, 0x72,
-	0x6f, 0x74, 0x6f, 0x33,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x42, 0x16, 0x5a, 0x14, 0x2e, 0x2f, 0x3b, 0x73,
+	0x79, 0x73, 0x72, 0x75, 0x6e, 0x63, 0x46, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66,
+	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -439,32 +415,22 @@ var file_sysruncFsProtobuf_proto_goTypes = []interface{}{
 	(*timestamppb.Timestamp)(nil), // 4: google.protobuf.Timestamp
 }
 var file_sysruncFsProtobuf_proto_depIdxs = []int32{
-	4,  // 0: protobuf.ContainerData.Ctime:type_name -> google.protobuf.Timestamp
-	2,  // 1: protobuf.sysruncStateChannel.GetMountpoint:input_type -> protobuf.MountpointReq
-	0,  // 2: protobuf.sysruncStateChannel.ContainerPreRegistration:input_type -> protobuf.ContainerData
-	0,  // 3: protobuf.sysruncStateChannel.ContainerRegistration:input_type -> protobuf.ContainerData
-	0,  // 4: protobuf.sysruncStateChannel.ContainerUnregistration:input_type -> protobuf.ContainerData
-	0,  // 5: protobuf.sysruncStateChannel.ContainerUpdate:input_type -> protobuf.ContainerData
-	2,  // 6: protobuf.sysboxStateChannel.GetMountpoint:input_type -> protobuf.MountpointReq
-	0,  // 7: protobuf.sysboxStateChannel.ContainerPreRegistration:input_type -> protobuf.ContainerData
-	0,  // 8: protobuf.sysboxStateChannel.ContainerRegistration:input_type -> protobuf.ContainerData
-	0,  // 9: protobuf.sysboxStateChannel.ContainerUnregistration:input_type -> protobuf.ContainerData
-	0,  // 10: protobuf.sysboxStateChannel.ContainerUpdate:input_type -> protobuf.ContainerData
-	3,  // 11: protobuf.sysruncStateChannel.GetMountpoint:output_type -> protobuf.MountpointResp
-	1,  // 12: protobuf.sysruncStateChannel.ContainerPreRegistration:output_type -> protobuf.Response
-	1,  // 13: protobuf.sysruncStateChannel.ContainerRegistration:output_type -> protobuf.Response
-	1,  // 14: protobuf.sysruncStateChannel.ContainerUnregistration:output_type -> protobuf.Response
-	1,  // 15: protobuf.sysruncStateChannel.ContainerUpdate:output_type -> protobuf.Response
-	3,  // 16: protobuf.sysboxStateChannel.GetMountpoint:output_type -> protobuf.MountpointResp
-	1,  // 17: protobuf.sysboxStateChannel.ContainerPreRegistration:output_type -> protobuf.Response
-	1,  // 18: protobuf.sysboxStateChannel.ContainerRegistration:output_type -> protobuf.Response
-	1,  // 19: protobuf.sysboxStateChannel.ContainerUnregistration:output_type -> protobuf.Response
-	1,  // 20: protobuf.sysboxStateChannel.ContainerUpdate:output_type -> protobuf.Response
-	11, // [11:21] is the sub-list for method output_type
-	1,  // [1:11] is the sub-list for method input_type
-	1,  // [1:1] is the sub-list for extension type_name
-	1,  // [1:1] is the sub-list for extension extendee
-	0,  // [0:1] is the sub-list for field type_name
+	4, // 0: protobuf.ContainerData.Ctime:type_name -> google.protobuf.Timestamp
+	2, // 1: protobuf.sysruncStateChannel.GetMountpoint:input_type -> protobuf.MountpointReq
+	0, // 2: protobuf.sysruncStateChannel.ContainerPreRegistration:input_type -> protobuf.ContainerData
+	0, // 3: protobuf.sysruncStateChannel.ContainerRegistration:input_type -> protobuf.ContainerData
+	0, // 4: protobuf.sysruncStateChannel.ContainerUnregistration:input_type -> protobuf.ContainerData
+	0, // 5: protobuf.sysruncStateChannel.ContainerUpdate:input_type -> protobuf.ContainerData
+	3, // 6: protobuf.sysruncStateChannel.GetMountpoint:output_type -> protobuf.MountpointResp
+	1, // 7: protobuf.sysruncStateChannel.ContainerPreRegistration:output_type -> protobuf.Response
+	1, // 8: protobuf.sysruncStateChannel.ContainerRegistration:output_type -> protobuf.Response
+	1, // 9: protobuf.sysruncStateChannel.ContainerUnregistration:output_type -> protobuf.Response
+	1, // 10: protobuf.sysruncStateChannel.ContainerUpdate:output_type -> protobuf.Response
+	6, // [6:11] is the sub-list for method output_type
+	1, // [1:6] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_sysruncFsProtobuf_proto_init() }
@@ -530,7 +496,7 @@ func file_sysruncFsProtobuf_proto_init() {
 			NumEnums:      0,
 			NumMessages:   4,
 			NumExtensions: 0,
-			NumServices:   2,
+			NumServices:   1,
 		},
 		GoTypes:           file_sysruncFsProtobuf_proto_goTypes,
 		DependencyIndexes: file_sysruncFsProtobuf_proto_depIdxs,
@@ -760,232 +726,6 @@ var _SysruncStateChannel_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ContainerUpdate",
 			Handler:    _SysruncStateChannel_ContainerUpdate_Handler,
-		},
-	},
-	Streams:  []grpc.StreamDesc{},
-	Metadata: "sysruncFsProtobuf.proto",
-}
-
-// SysboxStateChannelClient is the client API for SysboxStateChannel service.
-//
-// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://godoc.org/google.golang.org/grpc#ClientConn.NewStream.
-type SysboxStateChannelClient interface {
-	// Queries sysrunc-fs for the FUSE mountpoint
-	GetMountpoint(ctx context.Context, in *MountpointReq, opts ...grpc.CallOption) (*MountpointResp, error)
-	// Generates a container-preregistration message
-	ContainerPreRegistration(ctx context.Context, in *ContainerData, opts ...grpc.CallOption) (*Response, error)
-	// Generates a container-registration message
-	ContainerRegistration(ctx context.Context, in *ContainerData, opts ...grpc.CallOption) (*Response, error)
-	// Generates a container-unregistration message
-	ContainerUnregistration(ctx context.Context, in *ContainerData, opts ...grpc.CallOption) (*Response, error)
-	// Generates a container-update message
-	ContainerUpdate(ctx context.Context, in *ContainerData, opts ...grpc.CallOption) (*Response, error)
-}
-
-type sysboxStateChannelClient struct {
-	cc grpc.ClientConnInterface
-}
-
-func NewSysboxStateChannelClient(cc grpc.ClientConnInterface) SysboxStateChannelClient {
-	return &sysboxStateChannelClient{cc}
-}
-
-func (c *sysboxStateChannelClient) GetMountpoint(ctx context.Context, in *MountpointReq, opts ...grpc.CallOption) (*MountpointResp, error) {
-	out := new(MountpointResp)
-	err := c.cc.Invoke(ctx, "/protobuf.sysboxStateChannel/GetMountpoint", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *sysboxStateChannelClient) ContainerPreRegistration(ctx context.Context, in *ContainerData, opts ...grpc.CallOption) (*Response, error) {
-	out := new(Response)
-	err := c.cc.Invoke(ctx, "/protobuf.sysboxStateChannel/ContainerPreRegistration", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *sysboxStateChannelClient) ContainerRegistration(ctx context.Context, in *ContainerData, opts ...grpc.CallOption) (*Response, error) {
-	out := new(Response)
-	err := c.cc.Invoke(ctx, "/protobuf.sysboxStateChannel/ContainerRegistration", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *sysboxStateChannelClient) ContainerUnregistration(ctx context.Context, in *ContainerData, opts ...grpc.CallOption) (*Response, error) {
-	out := new(Response)
-	err := c.cc.Invoke(ctx, "/protobuf.sysboxStateChannel/ContainerUnregistration", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *sysboxStateChannelClient) ContainerUpdate(ctx context.Context, in *ContainerData, opts ...grpc.CallOption) (*Response, error) {
-	out := new(Response)
-	err := c.cc.Invoke(ctx, "/protobuf.sysboxStateChannel/ContainerUpdate", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// SysboxStateChannelServer is the server API for SysboxStateChannel service.
-type SysboxStateChannelServer interface {
-	// Queries sysrunc-fs for the FUSE mountpoint
-	GetMountpoint(context.Context, *MountpointReq) (*MountpointResp, error)
-	// Generates a container-preregistration message
-	ContainerPreRegistration(context.Context, *ContainerData) (*Response, error)
-	// Generates a container-registration message
-	ContainerRegistration(context.Context, *ContainerData) (*Response, error)
-	// Generates a container-unregistration message
-	ContainerUnregistration(context.Context, *ContainerData) (*Response, error)
-	// Generates a container-update message
-	ContainerUpdate(context.Context, *ContainerData) (*Response, error)
-}
-
-// UnimplementedSysboxStateChannelServer can be embedded to have forward compatible implementations.
-type UnimplementedSysboxStateChannelServer struct {
-}
-
-func (*UnimplementedSysboxStateChannelServer) GetMountpoint(context.Context, *MountpointReq) (*MountpointResp, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetMountpoint not implemented")
-}
-func (*UnimplementedSysboxStateChannelServer) ContainerPreRegistration(context.Context, *ContainerData) (*Response, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ContainerPreRegistration not implemented")
-}
-func (*UnimplementedSysboxStateChannelServer) ContainerRegistration(context.Context, *ContainerData) (*Response, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ContainerRegistration not implemented")
-}
-func (*UnimplementedSysboxStateChannelServer) ContainerUnregistration(context.Context, *ContainerData) (*Response, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ContainerUnregistration not implemented")
-}
-func (*UnimplementedSysboxStateChannelServer) ContainerUpdate(context.Context, *ContainerData) (*Response, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ContainerUpdate not implemented")
-}
-
-func RegisterSysboxStateChannelServer(s *grpc.Server, srv SysboxStateChannelServer) {
-	s.RegisterService(&_SysboxStateChannel_serviceDesc, srv)
-}
-
-func _SysboxStateChannel_GetMountpoint_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MountpointReq)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SysboxStateChannelServer).GetMountpoint(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/protobuf.sysboxStateChannel/GetMountpoint",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SysboxStateChannelServer).GetMountpoint(ctx, req.(*MountpointReq))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _SysboxStateChannel_ContainerPreRegistration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ContainerData)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SysboxStateChannelServer).ContainerPreRegistration(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/protobuf.sysboxStateChannel/ContainerPreRegistration",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SysboxStateChannelServer).ContainerPreRegistration(ctx, req.(*ContainerData))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _SysboxStateChannel_ContainerRegistration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ContainerData)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SysboxStateChannelServer).ContainerRegistration(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/protobuf.sysboxStateChannel/ContainerRegistration",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SysboxStateChannelServer).ContainerRegistration(ctx, req.(*ContainerData))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _SysboxStateChannel_ContainerUnregistration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ContainerData)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SysboxStateChannelServer).ContainerUnregistration(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/protobuf.sysboxStateChannel/ContainerUnregistration",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SysboxStateChannelServer).ContainerUnregistration(ctx, req.(*ContainerData))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _SysboxStateChannel_ContainerUpdate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ContainerData)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SysboxStateChannelServer).ContainerUpdate(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/protobuf.sysboxStateChannel/ContainerUpdate",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SysboxStateChannelServer).ContainerUpdate(ctx, req.(*ContainerData))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-var _SysboxStateChannel_serviceDesc = grpc.ServiceDesc{
-	ServiceName: "protobuf.sysboxStateChannel",
-	HandlerType: (*SysboxStateChannelServer)(nil),
-	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "GetMountpoint",
-			Handler:    _SysboxStateChannel_GetMountpoint_Handler,
-		},
-		{
-			MethodName: "ContainerPreRegistration",
-			Handler:    _SysboxStateChannel_ContainerPreRegistration_Handler,
-		},
-		{
-			MethodName: "ContainerRegistration",
-			Handler:    _SysboxStateChannel_ContainerRegistration_Handler,
-		},
-		{
-			MethodName: "ContainerUnregistration",
-			Handler:    _SysboxStateChannel_ContainerUnregistration_Handler,
-		},
-		{
-			MethodName: "ContainerUpdate",
-			Handler:    _SysboxStateChannel_ContainerUpdate_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

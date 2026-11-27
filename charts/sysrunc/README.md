@@ -41,9 +41,7 @@ list DaemonSets in `default`. Offline `helm template`/`helm lint` must use
 
 The chart creates the `sysrunc` RuntimeClass in host and nested modes. Its FS
 and ticker features are selected with `sysrunc.io/fs` and `sysrunc.io/ticker`;
-both default to off. Set `compatRuntimeClasses=true` only after the old chart
-has relinquished ownership of its `sysbox-runc` and `sysbox-runc-lite`
-RuntimeClasses. The nested installer installs the runtime and containerd handler
+both default to off. The nested installer installs the runtime and containerd handler
 from the installer image, then restarts K3s when the template changes.
 RuntimeClasses have no scheduling node selector.
 

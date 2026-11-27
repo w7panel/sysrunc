@@ -24,7 +24,7 @@ import (
 // HandlerBase is a type common to all the handlers.
 //
 // HandlerBase type is used to bundle the different file-system operations that
-// can be executed over sysbox-fs' emulated resources. As such, handlers are
+// can be executed over sysrunc-fs' emulated resources. As such, handlers are
 // typically associated with a directory path inside of which there is at least
 // one resource (file or subdir) that needs to be emulated.
 //
@@ -61,12 +61,12 @@ const (
 	FileEmuResource
 )
 
-// EmuResource represents the nodes being emulated by sysbox-fs.
+// EmuResource represents the nodes being emulated by sysrunc-fs.
 //
 // The "mutex" variable is utilized to synchronize access among concurrent i/o
 // operations made over the same host resource (e.g. if multiple processes within
 // the same sys container or across different sys containers are accessing the
-// same sysbox-fs emulated resource). By relying on a per-resource "mutex", and
+// same sysrunc-fs emulated resource). By relying on a per-resource "mutex", and
 // not a per-handler one, we are maximizing the level of concurrency that can be
 // attained.
 type EmuResource struct {

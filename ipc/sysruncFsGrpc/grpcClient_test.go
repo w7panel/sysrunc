@@ -18,32 +18,24 @@ func (*unimplementedNewService) GetMountpoint(context.Context, *pb.MountpointReq
 	return nil, status.Error(codes.Unimplemented, "method unavailable")
 }
 
-func TestStateChannelRolloutCompatibility(t *testing.T) {
+func TestStateChannel(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		newService bool
-		legacy     bool
-		badMethod  bool
-		want       string
-		wantCode   codes.Code
+		name      string
+		badMethod bool
+		want      string
+		wantCode  codes.Code
 	}{
-		{name: "new service", newService: true, want: "new"},
-		{name: "previous daemon", legacy: true, want: "legacy"},
-		{name: "method error is not retried", newService: true, legacy: true, badMethod: true, wantCode: codes.Unimplemented},
+		{name: "service", want: "new"},
+		{name: "method error", badMethod: true, wantCode: codes.Unimplemented},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			listener := bufconn.Listen(4096)
 			server := grpc.NewServer()
-			if tc.newService {
-				var handler pb.SysruncStateChannelServer = &Server{FuseMp: "new"}
-				if tc.badMethod {
-					handler = &unimplementedNewService{Server: &Server{FuseMp: "new"}}
-				}
-				pb.RegisterSysruncStateChannelServer(server, handler)
+			var handler pb.SysruncStateChannelServer = &Server{FuseMp: "new"}
+			if tc.badMethod {
+				handler = &unimplementedNewService{Server: &Server{FuseMp: "new"}}
 			}
-			if tc.legacy {
-				pb.RegisterSysboxStateChannelServer(server, &Server{FuseMp: "legacy"})
-			}
+			pb.RegisterSysruncStateChannelServer(server, handler)
 			go server.Serve(listener)
 			defer server.Stop()
 			defer listener.Close()

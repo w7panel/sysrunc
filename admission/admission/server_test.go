@@ -137,7 +137,7 @@ func admissionTestResource(resource string) metav1.GroupVersionResource {
 }
 
 func serverTestPod() *corev1.Pod {
-	runtimeClass := "sysbox-runc"
+	runtimeClass := "sysrunc"
 	hostUsers := false
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{AnnotationRootfsRwLayer: `[{"name":"app","volumeName":"rootfs","path":"app"}]`}},

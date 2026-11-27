@@ -3,7 +3,7 @@
 ## L2 rootfs startup
 
 For a Pod using `sysrunc.io/rootfs-rw-layer`, the first app container start can
-report `sysbox sidecar oci spec unavailable` while the injected
+report `sysrunc sidecar oci spec unavailable` while the injected
 `sysrunc-rootfs` sidecar is being created. This first error can be ignored **if
 the app container retries and the Pod becomes Ready**. Check the final Pod
 status and exercise the rootfs layer; do not mark a Pod that remains in

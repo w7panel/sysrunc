@@ -32,9 +32,9 @@ const mountPropFlags = (unix.MS_SHARED | unix.MS_PRIVATE | unix.MS_SLAVE | unix.
 const mountModFlags = (unix.MS_REMOUNT | unix.MS_BIND | unix.MS_MOVE | mountPropFlags)
 
 // mountHelper provides methods to aid in obtaining info about container mountpoints
-// managed by sysboxfs.
+// managed by sysruncfs.
 type mountHelper struct {
-	mapMounts  map[string]struct{} // map of all sysboxfs bind-mounts (rdonly + mask)
+	mapMounts  map[string]struct{} // map of all sysruncfs bind-mounts (rdonly + mask)
 	procMounts []string            // slice of procfs bind-mounts
 	sysMounts  []string            // slice of sysfs bind-mounts
 	flagsMap   map[string]uint64   // helper map to aid in flag conversion
@@ -78,12 +78,12 @@ func newMountHelper(svc *MountService) *mountHelper {
 	return info
 }
 
-// ProcMounts returns sysbox-fs' procfs submounts.
+// ProcMounts returns sysrunc-fs' procfs submounts.
 func (m *mountHelper) ProcMounts() []string {
 	return m.procMounts
 }
 
-// SysMounts returns sysbox-fs' sysfs submounts.
+// SysMounts returns sysrunc-fs' sysfs submounts.
 func (m *mountHelper) SysMounts() []string {
 	return m.sysMounts
 }

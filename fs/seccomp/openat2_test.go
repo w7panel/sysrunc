@@ -34,7 +34,7 @@ type openat2ProcessProbe struct {
 func (p openat2ProcessProbe) GetFd(int32) (string, error)                 { return p.fdPath, nil }
 func (p openat2ProcessProbe) ResolveProcSelf(path string) (string, error) { return path, nil }
 
-func TestRelativeOpenat2OutsideSysboxfsSkipsProcessAttrs(t *testing.T) {
+func TestRelativeOpenat2OutsideSysruncfsSkipsProcessAttrs(t *testing.T) {
 	si := &openat2SyscallInfo{
 		syscallCtx: syscallCtx{
 			reqId:       42,
@@ -71,7 +71,7 @@ func TestOpenat2RestrictionsContinueInKernel(t *testing.T) {
 	}
 }
 
-func BenchmarkRelativeOpenat2OutsideSysboxfs(b *testing.B) {
+func BenchmarkRelativeOpenat2OutsideSysruncfs(b *testing.B) {
 	fd, err := os.Open("/sys/fs/cgroup")
 	if err != nil {
 		b.Fatal(err)
@@ -114,14 +114,14 @@ func TestCanEarlyContinueOpenat2(t *testing.T) {
 		want    bool
 	}{
 		{
-			name:    "absolute cgroup path cannot hit sysboxfs mount",
+			name:    "absolute cgroup path cannot hit sysruncfs mount",
 			path:    "/sys/fs/cgroup/kubepods/burstable/pod123/memory.current",
 			dirfd:   unix.AT_FDCWD,
 			resolve: 0,
 			want:    true,
 		},
 		{
-			name:    "absolute non proc sys path cannot hit sysboxfs mount",
+			name:    "absolute non proc sys path cannot hit sysruncfs mount",
 			path:    "/etc/hosts",
 			dirfd:   unix.AT_FDCWD,
 			resolve: 0,

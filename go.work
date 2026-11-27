@@ -16,7 +16,6 @@ use (
 	./libs/overlayUtils
 	./libs/pidfd
 	./libs/pidmonitor
-	./libs/shiftfs
 	./libs/utils
 	./runc
 	./snapshotter
@@ -57,8 +56,6 @@ replace (
 replace github.com/w7panel/sysrunc/libs/overlayUtils v0.0.0-00010101000000-000000000000 => ./libs/overlayUtils
 
 replace github.com/w7panel/sysrunc/libs/pidfd v0.0.0-00010101000000-000000000000 => ./libs/pidfd
-
-replace github.com/w7panel/sysrunc/libs/shiftfs v0.0.0-00010101000000-000000000000 => ./libs/shiftfs
 
 replace github.com/w7panel/sysrunc/libs/utils v0.0.0-00010101000000-000000000000 => ./libs/utils
 

@@ -36,7 +36,7 @@ type FuseServerService struct {
 	quiesced     bool
 	sync.RWMutex                                   // servers map protection
 	path         string                            // fs path to emulate -- "/" by default
-	mountPoint   string                            // base mountpoint -- "/var/lib/sysboxfs" by default
+	mountPoint   string                            // base mountpoint -- "/var/lib/sysruncfs" by default
 	serversMap   map[string]*fuseServer            // tracks created fuse-servers
 	css          domain.ContainerStateServiceIface // containerState service pointer
 	ios          domain.IOServiceIface             // i/o service pointer
@@ -125,7 +125,7 @@ func (fss *FuseServerService) DestroyFuseService() {
 // stateCntr is the container object tracking the state for the fuse accesses.
 //
 // Normally serveCntr and stateCntr refer to the same cntr object. However, if
-// multiple containers want to share the same fuse state (as sysbox-fs does for
+// multiple containers want to share the same fuse state (as sysrunc-fs does for
 // kubernetes pods), then this function may be called with different serveCntr
 // objects but the same stateCntr object.
 func (fss *FuseServerService) CreateFuseServer(serveCntr, stateCntr domain.ContainerIface) error {

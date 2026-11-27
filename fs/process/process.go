@@ -327,7 +327,7 @@ func (p *process) AdjustPersonality(
 		// Execute setresuid() syscall to set this process' effective uid.
 		// Notice that as part of this instruction all effective capabilities of
 		// the running process will be reset, which is something that we are looking
-		// after given that "sysbox-fs nsenter" process runs with all capabilities
+		// after given that "sysrunc-fs nsenter" process runs with all capabilities
 		// turned on. Further below we re-apply only those capabilities that were
 		// present in the original process.
 		if err := setxid.Setresuid(-1, int(uid), -1); err != nil {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"strconv"
 
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -18,8 +17,8 @@ type runtimeFeatures struct {
 	ticker bool
 }
 
-func featuresForSpec(spec *specs.Spec, executable string) (runtimeFeatures, error) {
-	features := runtimeFeatures{fs: filepath.Base(executable) == "sysbox-runc"}
+func featuresForSpec(spec *specs.Spec, _ string) (runtimeFeatures, error) {
+	features := runtimeFeatures{}
 	for _, entry := range []struct {
 		key   string
 		value *bool

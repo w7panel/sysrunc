@@ -11,7 +11,6 @@ var ErrRootfsRwLayerNotConfigured = errors.New("rootfs rw-layer not configured")
 
 const (
 	AnnotationRootfsRwLayer = "sysrunc.io/rootfs-rw-layer"
-	LegacyRootfsRwLayer     = "sysbox/rootfs-rw-layer"
 	SidecarMountPath        = "/var/lib/sysrunc/rootfs-rw-volume"
 	SidecarContainerName    = "sysrunc-rootfs"
 )

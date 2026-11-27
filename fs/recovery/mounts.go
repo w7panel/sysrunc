@@ -93,7 +93,7 @@ func mountPlan(reader io.Reader, allowed []Device) ([]mountReplacement, error) {
 	}
 	var plan []mountReplacement
 	for _, mount := range mounts {
-		if mount.FSType != "fuse" || mount.Source != "sysboxfs" || !devices[Device{uint32(mount.Major), uint32(mount.Minor)}] {
+		if mount.FSType != "fuse" || mount.Source != "sysruncfs" || !devices[Device{uint32(mount.Major), uint32(mount.Minor)}] {
 			continue
 		}
 		if !filepath.IsAbs(mount.Root) || filepath.Clean(mount.Root) != mount.Root || !filepath.IsAbs(mount.Mountpoint) || filepath.Clean(mount.Mountpoint) != mount.Mountpoint {
@@ -178,7 +178,7 @@ func mountPlan(reader io.Reader, allowed []Device) ([]mountReplacement, error) {
 				if strings.Contains(m.Optional, "shared:") || strings.Contains(m.Optional, "master:") || strings.Contains(m.Optional, "propagate_from:") || strings.Contains(m.Optional, "unbindable") {
 					return nil, fmt.Errorf("%w: child mount %s", ErrUnsupportedPropagation, m.Mountpoint)
 				}
-				if m.FSType == "fuse" && m.Source == "sysboxfs" && devices[Device{uint32(m.Major), uint32(m.Minor)}] {
+				if m.FSType == "fuse" && m.Source == "sysruncfs" && devices[Device{uint32(m.Major), uint32(m.Minor)}] {
 					return nil, fmt.Errorf("nested disconnected FUSE child: %s", m.Mountpoint)
 				}
 				if m.ID != child.ID {
@@ -237,7 +237,7 @@ func processAlive(pidfd int) error {
 	}
 }
 
-// RepairMounts replaces only explicitly allowed, dead sysboxfs devices. Paths
+// RepairMounts replaces only explicitly allowed, dead sysruncfs devices. Paths
 // are resolved from pinned roots; only mount FDs cross into the helper process.
 // Success does not repair already-open file descriptors on the old connection.
 func RepairMounts(ctx context.Context, pid int, base, containerID string, allowed []Device) ([]string, error) {
@@ -558,7 +558,7 @@ func liveDevice(base string, device Device) (bool, error) {
 }
 func deviceInHostTree(mounts []*mountinfo.Info, base string, device Device) bool {
 	for _, m := range mounts {
-		if m.FSType == "fuse" && m.Source == "sysboxfs" && uint32(m.Major) == device.Major && uint32(m.Minor) == device.Minor && (m.Mountpoint == base || strings.HasPrefix(m.Mountpoint, filepath.Clean(base)+"/")) {
+		if m.FSType == "fuse" && m.Source == "sysruncfs" && uint32(m.Major) == device.Major && uint32(m.Minor) == device.Minor && (m.Mountpoint == base || strings.HasPrefix(m.Mountpoint, filepath.Clean(base)+"/")) {
 			return true
 		}
 	}
@@ -568,7 +568,7 @@ func deviceInHostTree(mounts []*mountinfo.Info, base string, device Device) bool
 // move_mount requires an attached destination. Assemble child mounts in this
 // helper's private namespace, then clone the whole tree for atomic replacement.
 func stageMountTree(item *mountReplacement) error {
-	dir, err := os.MkdirTemp("", "sysbox-recovery-")
+	dir, err := os.MkdirTemp("", "sysrunc-recovery-")
 	if err != nil {
 		return err
 	}

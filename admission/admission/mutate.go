@@ -13,12 +13,9 @@ import (
 
 const (
 	AnnotationRootfsRwLayer = "sysrunc.io/rootfs-rw-layer"
-	LegacyRootfsRwLayer     = "sysbox/rootfs-rw-layer"
 	AnnotationFS            = "sysrunc.io/fs"
 	AnnotationTicker        = "sysrunc.io/ticker"
 	RuntimeClassSysrunc     = "sysrunc"
-	RuntimeClassSysboxRunc  = "sysbox-runc"
-	RuntimeClassRuncLite    = "sysbox-runc-lite"
 )
 
 type Config struct {
@@ -52,9 +49,8 @@ func (m *Mutator) Mutate(ctx context.Context, pod *corev1.Pod) (*corev1.Pod, err
 
 func (m *Mutator) mutatePod(ctx context.Context, pod *corev1.Pod) ([]RootfsRwLayerEntry, bool, error) {
 	spec := &pod.Spec
-	newRootfs := strings.TrimSpace(pod.Annotations[AnnotationRootfsRwLayer])
-	legacyRootfs := strings.TrimSpace(pod.Annotations[LegacyRootfsRwLayer])
-	if (newRootfs != "" && newRootfs != "false") || (legacyRootfs != "" && legacyRootfs != "false") {
+	rootfs := strings.TrimSpace(pod.Annotations[AnnotationRootfsRwLayer])
+	if rootfs != "" && rootfs != "false" {
 		if spec.RuntimeClassName == nil || !isManagedRuntime(*spec.RuntimeClassName) {
 			return nil, false, fmt.Errorf("rootfs rw-layer annotation requires a sysrunc RuntimeClass")
 		}
@@ -62,7 +58,7 @@ func (m *Mutator) mutatePod(ctx context.Context, pod *corev1.Pod) ([]RootfsRwLay
 	if spec.RuntimeClassName == nil || !isManagedRuntime(*spec.RuntimeClassName) {
 		return nil, false, nil
 	}
-	fs := *spec.RuntimeClassName == RuntimeClassSysboxRunc
+	fs := false
 	if raw, ok := pod.Annotations[AnnotationFS]; ok {
 		if raw != "true" && raw != "false" {
 			return nil, false, fmt.Errorf("%s must be true or false", AnnotationFS)
@@ -77,16 +73,6 @@ func (m *Mutator) mutatePod(ctx context.Context, pod *corev1.Pod) ([]RootfsRwLay
 			return nil, false, fmt.Errorf("%s requires %s=true", AnnotationTicker, AnnotationFS)
 		}
 	}
-	if fs && *spec.RuntimeClassName == RuntimeClassSysboxRunc {
-		if spec.HostUsers != nil && *spec.HostUsers {
-			return nil, false, fmt.Errorf("FS-enabled sysrunc pods require hostUsers: false")
-		}
-		userNamespaces := false
-		spec.HostUsers = &userNamespaces
-	}
-	// PVC initialization is inferred by the runtime from trusted kubelet CSI
-	// mount paths. Do not expose or forward the former internal annotation.
-	delete(pod.Annotations, "sysbox/volume-init")
 	entries, enabled, err := parseRootfsAnnotation(pod.Annotations, spec)
 	if err != nil {
 		return nil, false, err
@@ -103,19 +89,11 @@ func (m *Mutator) mutatePod(ctx context.Context, pod *corev1.Pod) ([]RootfsRwLay
 }
 
 func isManagedRuntime(name string) bool {
-	return name == RuntimeClassSysrunc || name == RuntimeClassSysboxRunc || name == RuntimeClassRuncLite
+	return name == RuntimeClassSysrunc
 }
 
 func parseRootfsAnnotation(annotations map[string]string, spec *corev1.PodSpec) ([]RootfsRwLayerEntry, bool, error) {
 	raw, configured := annotations[AnnotationRootfsRwLayer]
-	if legacy, ok := annotations[LegacyRootfsRwLayer]; ok {
-		if configured && legacy != raw {
-			return nil, false, fmt.Errorf("conflicting rootfs rw-layer annotations")
-		}
-		if !configured {
-			raw, configured = legacy, true
-		}
-	}
 	if !configured {
 		return nil, false, nil
 	}

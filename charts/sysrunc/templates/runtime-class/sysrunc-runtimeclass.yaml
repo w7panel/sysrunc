@@ -5,6 +5,3 @@ metadata:
   labels:
     {{- include "sysrunc.labels" . | nindent 4 }}
 handler: sysrunc
-{{- if .Values.compatRuntimeClasses }}
-{{- fail "compatRuntimeClasses cannot be enabled while Sysrunc and Sysbox RuntimeClasses coexist; use the sysrunc RuntimeClass" }}
-{{- end }}

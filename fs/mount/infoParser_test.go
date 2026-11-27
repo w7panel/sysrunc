@@ -71,11 +71,11 @@ var mountInfoData = []byte(`1526 1218 0:86 / / rw,relatime - shiftfs /var/lib/do
 1544 1532 0:40 / /sys/fs/cgroup/freezer rw,nosuid,nodev,noexec,relatime - cgroup cgroup rw,freezer
 1555 1531 0:97 / /sys/kernel/config rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,size=1024k,uid=231072,gid=231072
 1583 1531 0:98 / /sys/kernel/debug rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,size=1024k,uid=231072,gid=231072
-1589 1531 0:77 /sys/module/nf_conntrack/parameters/hashsize /sys/module/nf_conntrack/parameters/hashsize rw,nosuid,nodev,relatime - fuse sysboxfs rw,user_id=0,group_id=0,default_permissions,allow_other
+1589 1531 0:77 /sys/module/nf_conntrack/parameters/hashsize /sys/module/nf_conntrack/parameters/hashsize rw,nosuid,nodev,relatime - fuse sysruncfs rw,user_id=0,group_id=0,default_permissions,allow_other
 1590 1526 0:85 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw
-1610 1590 0:77 /proc/swaps /proc/swaps rw,nosuid,nodev,relatime - fuse sysboxfs rw,user_id=0,group_id=0,default_permissions,allow_other
-1638 1590 0:77 /proc/sys /proc/sys rw,nosuid,nodev,relatime - fuse sysboxfs rw,user_id=0,group_id=0,default_permissions,allow_other
-1644 1590 0:77 /proc/uptime /proc/uptime rw,nosuid,nodev,relatime - fuse sysboxfs rw,user_id=0,group_id=0,default_permissions,allow_other
+1610 1590 0:77 /proc/swaps /proc/swaps rw,nosuid,nodev,relatime - fuse sysruncfs rw,user_id=0,group_id=0,default_permissions,allow_other
+1638 1590 0:77 /proc/sys /proc/sys rw,nosuid,nodev,relatime - fuse sysruncfs rw,user_id=0,group_id=0,default_permissions,allow_other
+1644 1590 0:77 /proc/uptime /proc/uptime rw,nosuid,nodev,relatime - fuse sysruncfs rw,user_id=0,group_id=0,default_permissions,allow_other
 1645 1526 0:104 / /dev rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,uid=231072,gid=231072
 1711 1645 0:6 /null /dev/kmsg rw,nosuid,relatime - devtmpfs udev rw,size=4058184k,nr_inodes=1014546,mode=755
 1712 1645 0:84 / /dev/mqueue rw,nosuid,nodev,noexec,relatime - mqueue mqueue rw

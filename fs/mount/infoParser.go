@@ -16,7 +16,7 @@
 
 //
 // This file provides info about mounts seen by a given process' and whether some of these
-// are managed by sysbox-fs.
+// are managed by sysrunc-fs.
 //
 // For example, in the following mount tree for a given process:
 //
@@ -32,13 +32,13 @@
 // | |-/proc/timer_list                             tmpfs[/null]                                                   tmpfs   rw,nosuid,size=65536k,mode=755
 // | |-/proc/sched_debug                            tmpfs[/null]                                                   tmpfs   rw,nosuid,size=65536k,mode=755
 // | |-/proc/scsi                                   tmpfs                                                          tmpfs   ro,relatime,uid=165536,gid=165536
-// | |-/proc/swaps                                  sysboxfs[/proc/swaps]                                          fuse    rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
-// | |-/proc/sys                                    sysboxfs[/proc/sys]                                            fuse    rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
-// | `-/proc/uptime                                 sysboxfs[/proc/uptime]                                         fuse    rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+// | |-/proc/swaps                                  sysruncfs[/proc/swaps]                                          fuse    rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+// | |-/proc/sys                                    sysruncfs[/proc/sys]                                            fuse    rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+// | `-/proc/uptime                                 sysruncfs[/proc/uptime]                                         fuse    rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
 //
 //
-// "/proc" is a sysbox-fs managed base mount.
-// "/proc/*" are sysbox-fs managed submounts used to expose, hide, or emulate portions of procfs.
+// "/proc" is a sysrunc-fs managed base mount.
+// "/proc/*" are sysrunc-fs managed submounts used to expose, hide, or emulate portions of procfs.
 //
 // Same applies to sysfs mounts.
 
@@ -58,7 +58,7 @@ import (
 )
 
 // mountInfoParser holds info about a process' mountpoints, and can be queried
-// to check if a given mountpoint is a sysbox-fs managed mountpoint (i.e., base
+// to check if a given mountpoint is a sysrunc-fs managed mountpoint (i.e., base
 // mount or submount).
 type mountInfoParser struct {
 	cntr         domain.ContainerIface
@@ -353,10 +353,10 @@ func (mi *mountInfoParser) extractAllInodes() error {
 	var reqMounts []string
 
 	for _, info := range mi.idInfo {
-		// Skip sysbox-fs' emulated resources to avoid the hassle of dealing
-		// with nested accesses to sysbox-fs' fuse-server from nsenter's
+		// Skip sysrunc-fs' emulated resources to avoid the hassle of dealing
+		// with nested accesses to sysrunc-fs' fuse-server from nsenter's
 		// backend processes. No inode will be required for these mountpoints
-		// anyways as sysbox-fs handle these file-systems differently.
+		// anyways as sysrunc-fs handle these file-systems differently.
 		if _, ok := mi.service.mh.mapMounts[info.MountPoint]; ok {
 			continue
 		}
@@ -397,10 +397,10 @@ func (mi *mountInfoParser) extractAncestorInodes(info *domain.MountInfo) error {
 			break
 		}
 
-		// Skip sysbox-fs' emulated resources to avoid the hassle of dealing
-		// with nested accesses to sysbox-fs' fuse-server from nsenter's
+		// Skip sysrunc-fs' emulated resources to avoid the hassle of dealing
+		// with nested accesses to sysrunc-fs' fuse-server from nsenter's
 		// backend processes. No inode will be required for these mountpoints
-		// anyways as sysbox-fs handle these file-systems differently.
+		// anyways as sysrunc-fs handle these file-systems differently.
 		if _, ok := mi.service.mh.mapMounts[info.MountPoint]; !ok {
 			reqMounts = append(reqMounts, info.MountPoint)
 		}
@@ -466,23 +466,23 @@ func (mi *mountInfoParser) extractInodes(mps []string) ([]domain.Inode, error) {
 	return responseMsg.Payload.(domain.MountInodeRespPayload).MpInodes, nil
 }
 
-// isSysboxfsBasemount checks if the given mountpoint is a sysbox-fs managed
+// isSysruncfsBasemount checks if the given mountpoint is a sysrunc-fs managed
 // base mount (e.g., a procfs or sysfs mountpoint).
-func (mi *mountInfoParser) isSysboxfsBaseMount(info *domain.MountInfo) bool {
+func (mi *mountInfoParser) isSysruncfsBaseMount(info *domain.MountInfo) bool {
 	return (info.FsType == "proc" || info.FsType == "sysfs") && info.Root == "/"
 }
 
-// isSysboxfsSubmountOf checks is the given mountpoint is a sysbox-fs managed
-// submount of the given sysbox-fs base mount (e.g., /proc/sys is a sysbox-fs
+// isSysruncfsSubmountOf checks is the given mountpoint is a sysrunc-fs managed
+// submount of the given sysrunc-fs base mount (e.g., /proc/sys is a sysrunc-fs
 // managed submount of /proc).
-func (mi *mountInfoParser) isSysboxfsSubMountOf(info, baseInfo *domain.MountInfo) bool {
+func (mi *mountInfoParser) isSysruncfsSubMountOf(info, baseInfo *domain.MountInfo) bool {
 	if info.ParentID != baseInfo.MountID {
 		return false
 	}
 
-	// Note: submounts may contain mounts *not* managed by sysbox-fs (e.g., if a
+	// Note: submounts may contain mounts *not* managed by sysrunc-fs (e.g., if a
 	// user mounts something under /proc/*). Check if the given submount is
-	// managed by sysbox-fs or not.
+	// managed by sysrunc-fs or not.
 
 	relMountpoint := strings.TrimPrefix(info.MountPoint, baseInfo.MountPoint)
 
@@ -513,9 +513,9 @@ func isMountpointUnder(mountpoint string, mpSet []string) bool {
 	return false
 }
 
-// isSysboxfsSubMount returns true if the given mountpoint is a sysboxfs-managed
-// submount (e.g., /proc/sys is a sysbox-fs managed submount of /proc).
-func (mi *mountInfoParser) isSysboxfsSubMount(info *domain.MountInfo) bool {
+// isSysruncfsSubMount returns true if the given mountpoint is a sysruncfs-managed
+// submount (e.g., /proc/sys is a sysrunc-fs managed submount of /proc).
+func (mi *mountInfoParser) isSysruncfsSubMount(info *domain.MountInfo) bool {
 
 	parentInfo := mi.GetParentMount(info)
 
@@ -524,11 +524,11 @@ func (mi *mountInfoParser) isSysboxfsSubMount(info *domain.MountInfo) bool {
 		return false
 	}
 
-	if !mi.isSysboxfsBaseMount(parentInfo) {
+	if !mi.isSysruncfsBaseMount(parentInfo) {
 		return false
 	}
 
-	return mi.isSysboxfsSubMountOf(info, parentInfo)
+	return mi.isSysruncfsSubMountOf(info, parentInfo)
 }
 
 // GetInfo returns the mountinfo for a given mountpoint.
@@ -597,28 +597,28 @@ func (mi *mountInfoParser) IsRootMount(info *domain.MountInfo) (bool, error) {
 	return isClone, nil
 }
 
-// IsSysboxfsBaseMount checks if the given mountpoint is a sysbox-fs managed
+// IsSysruncfsBaseMount checks if the given mountpoint is a sysrunc-fs managed
 // base mount (e.g., a procfs or sysfs mountpoint).
-func (mi *mountInfoParser) IsSysboxfsBaseMount(mountpoint string) bool {
+func (mi *mountInfoParser) IsSysruncfsBaseMount(mountpoint string) bool {
 
 	info, found := mi.mpInfo[mountpoint]
 	if !found {
 		return false
 	}
 
-	return mi.isSysboxfsBaseMount(info)
+	return mi.isSysruncfsBaseMount(info)
 }
 
-// IsSysboxfsBaseMount checks if the given mountpoint is a sysbox-fs managed
+// IsSysruncfsBaseMount checks if the given mountpoint is a sysrunc-fs managed
 // base mount (e.g., a procfs or sysfs mountpoint) mounted as read-only.
-func (mi *mountInfoParser) IsSysboxfsBaseRoMount(mountpoint string) bool {
+func (mi *mountInfoParser) IsSysruncfsBaseRoMount(mountpoint string) bool {
 
 	info, found := mi.mpInfo[mountpoint]
 	if !found {
 		return false
 	}
 
-	if mi.isSysboxfsBaseMount(info) &&
+	if mi.isSysruncfsBaseMount(info) &&
 		mi.IsRoMount(info) {
 		return true
 	}
@@ -626,28 +626,28 @@ func (mi *mountInfoParser) IsSysboxfsBaseRoMount(mountpoint string) bool {
 	return false
 }
 
-// IsSysboxfsSubmount checks if the given mountpoint is a sysbox-fs managed
-// submount (e.g., /proc/sys is a sysbox-fs managed submount of /proc).
-func (mi *mountInfoParser) IsSysboxfsSubmount(mountpoint string) bool {
+// IsSysruncfsSubmount checks if the given mountpoint is a sysrunc-fs managed
+// submount (e.g., /proc/sys is a sysrunc-fs managed submount of /proc).
+func (mi *mountInfoParser) IsSysruncfsSubmount(mountpoint string) bool {
 
 	info, found := mi.mpInfo[mountpoint]
 	if !found {
 		return false
 	}
 
-	return mi.isSysboxfsSubMount(info)
+	return mi.isSysruncfsSubMount(info)
 }
 
-// IsSysboxfsRoSubmount checks if the given mountpoint is a sysbox-fs managed
+// IsSysruncfsRoSubmount checks if the given mountpoint is a sysrunc-fs managed
 // submount that is mounted as read-only.
-func (mi *mountInfoParser) IsSysboxfsRoSubmount(mountpoint string) bool {
+func (mi *mountInfoParser) IsSysruncfsRoSubmount(mountpoint string) bool {
 
 	info, found := mi.mpInfo[mountpoint]
 	if !found {
 		return false
 	}
 
-	if !mi.isSysboxfsSubMount(info) {
+	if !mi.isSysruncfsSubMount(info) {
 		return false
 	}
 
@@ -665,16 +665,16 @@ func (mi *mountInfoParser) IsSysboxfsRoSubmount(mountpoint string) bool {
 	return false
 }
 
-// IsSysboxfsMaskedSubmount checks if the given moutpoint is a sysbox-fs managed
+// IsSysruncfsMaskedSubmount checks if the given moutpoint is a sysrunc-fs managed
 // submount that is masked (i.e., bind mounted from /dev/null).
-func (mi *mountInfoParser) IsSysboxfsMaskedSubmount(mountpoint string) bool {
+func (mi *mountInfoParser) IsSysruncfsMaskedSubmount(mountpoint string) bool {
 
 	info, found := mi.mpInfo[mountpoint]
 	if !found {
 		return false
 	}
 
-	if !mi.isSysboxfsSubMount(info) {
+	if !mi.isSysruncfsSubMount(info) {
 		return false
 	}
 
@@ -692,16 +692,16 @@ func (mi *mountInfoParser) IsSysboxfsMaskedSubmount(mountpoint string) bool {
 	return false
 }
 
-// GetSysboxfsSubMounts returns a list of sysbox-fs managed submounts under the
+// GetSysruncfsSubMounts returns a list of sysrunc-fs managed submounts under the
 // given base mount (e.g., if basemount is /proc, returns all /proc/* submounts
-// managed by sysbox-fs).
-func (mi *mountInfoParser) GetSysboxfsSubMounts(basemount string) []string {
+// managed by sysrunc-fs).
+func (mi *mountInfoParser) GetSysruncfsSubMounts(basemount string) []string {
 
 	baseInfo := mi.mpInfo[basemount]
 
 	submounts := []string{}
 	for mp, info := range mi.mpInfo {
-		if mi.isSysboxfsSubMountOf(info, baseInfo) {
+		if mi.isSysruncfsSubMountOf(info, baseInfo) {
 			submounts = append(submounts, mp)
 		}
 	}
@@ -709,18 +709,18 @@ func (mi *mountInfoParser) GetSysboxfsSubMounts(basemount string) []string {
 	return submounts
 }
 
-// HasNonSysboxfsSubmount checks if there is at least one non sysbox-fs managed
+// HasNonSysruncfsSubmount checks if there is at least one non sysrunc-fs managed
 // submount under the given base mount (e.g., if basemount is /proc, returns
-// true if there is a mount under /proc that was not setup by sysbox-fs, such as
+// true if there is a mount under /proc that was not setup by sysrunc-fs, such as
 // when a user inside the sys container creates a mount under /proc).
-func (mi *mountInfoParser) HasNonSysboxfsSubmount(basemount string) bool {
+func (mi *mountInfoParser) HasNonSysruncfsSubmount(basemount string) bool {
 
 	baseInfo := mi.mpInfo[basemount]
 	baseID := baseInfo.MountID
 
 	for _, info := range mi.mpInfo {
 		if info.ParentID == baseID {
-			if !mi.isSysboxfsSubMountOf(info, baseInfo) {
+			if !mi.isSysruncfsSubMountOf(info, baseInfo) {
 				return true
 			}
 		}
